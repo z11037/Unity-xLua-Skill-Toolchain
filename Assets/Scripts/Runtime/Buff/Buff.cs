@@ -6,7 +6,10 @@ public class Buff
     public BuffSO Config { get; private set; }
     public int CurrentStack { get; private set; }
     public float RemainingTime { get; private set; }
+
     public float TickAccumulator { get; private set; }
+    public bool NeedTick =>
+    Config != null && Config.tickInterval > 0f;
 
     public Character Owner { get; private set; }
     public Character Source { get; private set; }
@@ -48,14 +51,12 @@ public class Buff
         TickAccumulator = 0f;
     }
 
-    public int Update(float deltaTime)
+    public void UpdateDuration(float deltaTime)
     {
         if (deltaTime <= 0f || IsExpired)
         {
-            return 0;
+            return;
         }
-
-        float activeDeltaTime = Mathf.Min(deltaTime, RemainingTime);
 
         RemainingTime -= deltaTime;
 
@@ -63,15 +64,20 @@ public class Buff
         {
             RemainingTime = 0f;
         }
+    }
 
-        if (Config.tickInterval <= 0f)
+    public int UpdateTick(float deltaTime)
+    {
+        if (!NeedTick || deltaTime <= 0f || IsExpired)
         {
             return 0;
         }
 
-        TickAccumulator += activeDeltaTime;
+        TickAccumulator += deltaTime;
 
-        int tickCount = Mathf.FloorToInt(TickAccumulator / Config.tickInterval);
+        int tickCount = Mathf.FloorToInt(
+            TickAccumulator / Config.tickInterval
+        );
 
         if (tickCount > 0)
         {

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 public class BuffManager : MonoBehaviour
@@ -7,6 +8,14 @@ public class BuffManager : MonoBehaviour
 
     private readonly IBuffExecutor executor = new DefaultBuffExecutor();
 
+    private readonly HashSet<CharacterRuntime> activeRuntimes = new HashSet<CharacterRuntime>();
+
+    private readonly List<CharacterRuntime> removeCache = new List<CharacterRuntime>();
+
+    private readonly PerformanceStats stats = new PerformanceStats();
+    public PerformanceStats Stats => stats;
+
+    private float debugTimer;
     private void Awake()
     {
         if (Instance != null && Instance != this)
@@ -23,25 +32,23 @@ public class BuffManager : MonoBehaviour
     private void Update()
     {
 
-        if (CharacterRuntimeManager.Instance == null)
-        {
-            return;
-        }
-
         float deltaTime = Time.deltaTime;
+        stats.Reset();
+        removeCache.Clear();
 
-        foreach (CharacterRuntime runtime in CharacterRuntimeManager.Instance.GetAllRuntimes())
+        foreach (CharacterRuntime runtime in activeRuntimes)
         {
-            
+            stats.AddRuntime();
 
             if (runtime == null)
             {
                 continue;
             }
 
-            if (runtime.IsDead && runtime.Buffs.Count != 0)
+            if (runtime.IsDead)
             {
                 RemoveAllBuffs(runtime);
+                removeCache.Add(runtime);
                 continue;
             }
 
@@ -54,9 +61,54 @@ public class BuffManager : MonoBehaviour
                     continue;
                 }
 
-                UpdateBuff(runtime, buff, deltaTime);
+                stats.AddBuff();
+
+                UpdateDuration(runtime, buff, deltaTime);
+            }
+
+
+            for (int i = runtime.TickBuffs.Count - 1; i >= 0; i--)
+            {
+                Buff buff = runtime.TickBuffs[i];
+
+                if (buff == null)
+                {
+                    continue;
+                }
+
+                stats.AddTickBuff();
+
+                UpdateTick(buff, deltaTime);
+            }
+
+            if (runtime.Buffs.Count == 0)
+            {
+                removeCache.Add(runtime);
             }
         }
+
+        for (int i = 0; i < removeCache.Count; i++)
+        {
+            activeRuntimes.Remove(removeCache[i]);
+        }
+
+        debugTimer += deltaTime;
+
+        if (debugTimer >= 2f)
+        {
+            debugTimer = 0f;
+
+            Log.Buff(GetPerformanceInfo());
+        }
+    }
+
+    public string GetPerformanceInfo()
+    {
+        return
+            $"Runtime:{stats.ActiveRuntimeCount}, " +
+            $"Buff:{stats.ActiveBuffCount}, " +
+            $"TickBuff:{stats.TickBuffCount}, " +
+            $"TickExecute:{stats.TickExecuteCount}";
     }
 
     private void OnDestroy()
@@ -131,14 +183,9 @@ public class BuffManager : MonoBehaviour
         Log.Buff($"[BuffManager] 角色 {runtime.CharacterId} 的 Buff 已全部清理");
     }
 
-    private void UpdateBuff(CharacterRuntime runtime, Buff buff, float deltaTime)
+    private void UpdateDuration(CharacterRuntime runtime, Buff buff, float deltaTime)
     {
-        int tickCount = buff.Update(deltaTime);
-
-        for (int tickIndex = 0; tickIndex < tickCount; tickIndex++)
-        {
-            ExecuteTick(buff);
-        }
+        buff.UpdateDuration(deltaTime);
 
         if (!buff.IsExpired)
         {
@@ -149,6 +196,17 @@ public class BuffManager : MonoBehaviour
         runtime.RemoveBuff(buff);
 
         Log.Buff($"[BuffManager] Buff 到期移除：{buff.DisplayName}");
+    }
+
+    private void UpdateTick(Buff buff, float deltaTime)
+    {
+        int tickCount = buff.UpdateTick(deltaTime);
+
+        for (int i = 0; i < tickCount; i++)
+        {
+            stats.AddTickExecute();
+            ExecuteTick(buff);
+        }
     }
 
     private void ReapplyBuff(Buff buff)
@@ -180,12 +238,12 @@ public class BuffManager : MonoBehaviour
             Debug.LogException(exception);
             return;
         }
-
         if (!runtime.AddBuff(newBuff))
         {
             return;
         }
 
+        activeRuntimes.Add(runtime);
         try
         {
             executor.OnApply(newBuff);

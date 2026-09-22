@@ -14,6 +14,9 @@ public class Character : MonoBehaviour
     [FormerlySerializedAs("attack")]
     [SerializeField] private FinalState initialAttack;
 
+    [SerializeField] private float baseMoveSpeed = 5f;
+    [SerializeField] private CharacterMotor motor;
+
     [SerializeField] private List<SkillSO> skillConfigs = new List<SkillSO>();
 
     public string characterName;
@@ -43,11 +46,16 @@ public class Character : MonoBehaviour
             return;
         }
 
-        runtime = CharacterRuntimeManager.Instance.RegisterCharacter(characterId, initialMaxHealth.Value, initialAttack.Value);
+        runtime = CharacterRuntimeManager.Instance.RegisterCharacter(characterId, initialMaxHealth.Value, initialAttack.Value, baseMoveSpeed);
 
         if (runtime == null)
         {
             return;
+        }
+
+        if (motor != null)
+        {
+            motor.BindRuntime(runtime);
         }
 
         runtime.OnDied += HandleDied;
@@ -65,35 +73,14 @@ public class Character : MonoBehaviour
     {
         Debug.Log($"½ÇÉ« {characterName} ÒÑËÀÍö");
 
+        if (motor != null)
+        {
+            motor.Stop();
+        }
+
         enabled = false;
     }
 
-    private void Update()
-    {
-        if (!Input.GetKeyDown(KeyCode.J))
-        {
-            return;
-        }
-
-        if (SkillManager.Instance == null)
-        {
-            return;
-        }
-
-        if (skillConfigs == null || skillConfigs.Count == 0)
-        {
-            return;
-        }
-
-        SkillSO skillConfig = skillConfigs[0];
-
-        if (skillConfig == null || testTarget == null)
-        {
-            return;
-        }
-
-        SkillManager.Instance.RequestCast(characterId, skillConfig.skillID, this, testTarget);
-    }
     public void TakeDamage(int damage)
     {
         CharacterRuntime runtime = GetRuntime();
@@ -185,6 +172,51 @@ public class Character : MonoBehaviour
         }
 
         return CharacterRuntimeManager.Instance.GetRuntime(characterId);
+    }
+
+    private void Update()
+    {
+        if (motor != null)
+        {
+            motor.Tick(Time.deltaTime);
+        }
+    }
+
+    public void SetMoveDirection(Vector3 direction)
+    {
+        if (runtime == null || runtime.IsDead)
+        {
+            return;
+        }
+
+        if (motor == null)
+        {
+            return;
+        }
+
+        motor.SetMoveDirection(direction);
+    }
+
+    public void RequestTestSkill()
+    {
+        if (SkillManager.Instance == null)
+        {
+            return;
+        }
+
+        if (skillConfigs == null || skillConfigs.Count == 0)
+        {
+            return;
+        }
+
+        SkillSO skillConfig = skillConfigs[0];
+
+        if (skillConfig == null || testTarget == null)
+        {
+            return;
+        }
+
+        SkillManager.Instance.RequestCast(characterId, skillConfig.skillID, this, testTarget);
     }
 
     private void OnDestroy()

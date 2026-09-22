@@ -8,15 +8,14 @@ public sealed class CharacterRuntime : IDisposable
 
     public FinalState MaxHealth { get; private set; }
     public FinalState Attack { get; private set; }
+    public FinalState MoveSpeed { get; private set; }
     public float CurrentHealth { get; private set; }
 
     public bool IsDead => CurrentHealth <= 0f;
 
-    
-
     private readonly Dictionary<int, Skill> skills = new Dictionary<int, Skill>();
     private readonly List<Buff> buffs = new List<Buff>();
-
+    private readonly List<Buff> tickBuffs = new List<Buff>();
     public event Action<float, float> OnHealthChanged;
     public event Action OnDied;
     public IReadOnlyList<Buff> Buffs
@@ -26,16 +25,26 @@ public sealed class CharacterRuntime : IDisposable
             return buffs;
         }
     }
+    public IReadOnlyList<Buff> TickBuffs
+    {
+        get
+        {
+            return tickBuffs;
+        }
+    }
 
-    public CharacterRuntime(int characterId, float initialMaxHealth, float initialAttack)
+    public CharacterRuntime(int characterId, float initialMaxHealth, float initialAttack, float initialMoveSpeed)
     {
         CharacterId = characterId;
 
         float validMaxHealth = Mathf.Max(1f, initialMaxHealth);
         float validAttack = Mathf.Max(0f, initialAttack);
+        float validMoveSpeed = Mathf.Max(0f, initialMoveSpeed);
 
         MaxHealth = new FinalState(validMaxHealth);
         Attack = new FinalState(validAttack);
+        MoveSpeed = new FinalState(validMoveSpeed);
+
         CurrentHealth = MaxHealth.Value;
     }
 
@@ -249,6 +258,12 @@ public sealed class CharacterRuntime : IDisposable
         }
 
         buffs.Add(buff);
+
+        if (buff.NeedTick)
+        {
+            tickBuffs.Add(buff);
+        }
+
         return true;
     }
 
@@ -259,7 +274,14 @@ public sealed class CharacterRuntime : IDisposable
             return false;
         }
 
-        return buffs.Remove(buff);
+        bool removed = buffs.Remove(buff);
+
+        if (removed && buff.NeedTick)
+        {
+            tickBuffs.Remove(buff);
+        }
+
+        return removed;
     }
 
     public void Tick(float deltaTime)
@@ -285,6 +307,7 @@ public sealed class CharacterRuntime : IDisposable
         }
 
         buffs.Clear();
+        tickBuffs.Clear();
         OnHealthChanged = null;
         OnDied = null;
         Debug.Log($"角色 {CharacterId} 的 CharacterRuntime 已释放");

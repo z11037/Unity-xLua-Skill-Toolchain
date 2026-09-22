@@ -7,6 +7,7 @@ public sealed class CharacterRuntimeManager : MonoBehaviour
 
     private readonly Dictionary<int, CharacterRuntime> runtimes = new Dictionary<int, CharacterRuntime>();
 
+    private bool isDisposed;
     private void Awake()
     {
         if (Instance != null && Instance != this)
@@ -21,7 +22,7 @@ public sealed class CharacterRuntimeManager : MonoBehaviour
         Debug.Log("CharacterRuntimeManager 初始化完成");
     }
 
-    public CharacterRuntime RegisterCharacter(int characterId, float initialMaxHealth, float initialAttack)
+    public CharacterRuntime RegisterCharacter(int characterId, float initialMaxHealth, float initialAttack, float initialMoveSpeed)
     {
         if (runtimes.TryGetValue(characterId, out CharacterRuntime oldRuntime))
         {
@@ -31,7 +32,7 @@ public sealed class CharacterRuntimeManager : MonoBehaviour
             runtimes.Remove(characterId);
         }
 
-        CharacterRuntime runtime = new CharacterRuntime(characterId, initialMaxHealth, initialAttack);
+        CharacterRuntime runtime = new CharacterRuntime(characterId, initialMaxHealth, initialAttack, initialMoveSpeed);
         runtimes.Add(characterId, runtime);
 
         Debug.Log($"角色 {characterId} Runtime 注册完成");
@@ -70,14 +71,28 @@ public sealed class CharacterRuntimeManager : MonoBehaviour
         return runtimes.Values;
     }
 
-    private void OnDestroy()
+    public void DisposeAll()
     {
+        if (isDisposed)
+        {
+            return;
+        }
+
+        isDisposed = true;
+
         foreach (CharacterRuntime runtime in runtimes.Values)
         {
             runtime.Dispose();
         }
 
         runtimes.Clear();
+
+        Debug.Log("CharacterRuntimeManager 已释放全部 Runtime");
+    }
+
+    private void OnDestroy()
+    {
+        DisposeAll();
 
         if (Instance == this)
         {
