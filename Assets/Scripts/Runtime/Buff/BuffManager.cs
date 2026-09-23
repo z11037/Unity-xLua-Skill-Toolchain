@@ -12,10 +12,6 @@ public class BuffManager : MonoBehaviour
 
     private readonly List<CharacterRuntime> removeCache = new List<CharacterRuntime>();
 
-    private readonly PerformanceStats stats = new PerformanceStats();
-    public PerformanceStats Stats => stats;
-
-    private float debugTimer;
     private void Awake()
     {
         if (Instance != null && Instance != this)
@@ -33,12 +29,10 @@ public class BuffManager : MonoBehaviour
     {
 
         float deltaTime = Time.deltaTime;
-        stats.Reset();
         removeCache.Clear();
 
         foreach (CharacterRuntime runtime in activeRuntimes)
         {
-            stats.AddRuntime();
 
             if (runtime == null)
             {
@@ -61,8 +55,6 @@ public class BuffManager : MonoBehaviour
                     continue;
                 }
 
-                stats.AddBuff();
-
                 UpdateDuration(runtime, buff, deltaTime);
             }
 
@@ -76,7 +68,6 @@ public class BuffManager : MonoBehaviour
                     continue;
                 }
 
-                stats.AddTickBuff();
 
                 UpdateTick(buff, deltaTime);
             }
@@ -92,23 +83,6 @@ public class BuffManager : MonoBehaviour
             activeRuntimes.Remove(removeCache[i]);
         }
 
-        debugTimer += deltaTime;
-
-        if (debugTimer >= 2f)
-        {
-            debugTimer = 0f;
-
-            Log.Buff(GetPerformanceInfo());
-        }
-    }
-
-    public string GetPerformanceInfo()
-    {
-        return
-            $"Runtime:{stats.ActiveRuntimeCount}, " +
-            $"Buff:{stats.ActiveBuffCount}, " +
-            $"TickBuff:{stats.TickBuffCount}, " +
-            $"TickExecute:{stats.TickExecuteCount}";
     }
 
     private void OnDestroy()
@@ -204,7 +178,6 @@ public class BuffManager : MonoBehaviour
 
         for (int i = 0; i < tickCount; i++)
         {
-            stats.AddTickExecute();
             ExecuteTick(buff);
         }
     }
@@ -298,4 +271,5 @@ public class BuffManager : MonoBehaviour
             Debug.LogException(exception);
         }
     }
+
 }
