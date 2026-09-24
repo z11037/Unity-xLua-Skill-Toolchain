@@ -241,44 +241,25 @@ public class SkillEditorWindow : EditorWindow
     {
         if (!string.IsNullOrWhiteSpace(newSkillName))
         {
-            string folderPath = SkillPathConfig.SkillFolder;
-            if (!AssetDatabase.IsValidFolder(folderPath))
-            {
-                System.IO.Directory.CreateDirectory(folderPath);
-                AssetDatabase.Refresh();
-            }
-
-            SkillSO newSkill = CreateInstance<SkillSO>();
             int maxID = skills.Count > 0 ? skills.Max(s => s.skillID) : 1000;
-            newSkill.skillID = maxID + 1;
-            newSkill.skillName = newSkillName.Trim();
 
-            string assetName = newSkillName.Trim();
-            string targetPath = $"{folderPath}/{newSkill.skillID}_{assetName}.asset";
-            int counter = 1;
-            while (System.IO.File.Exists(targetPath))
-            {
-                targetPath = $"{folderPath}/{assetName} {counter}.asset";
-                counter++;
-            }
+            SkillSO newSkill = SkillRepository.Create(newSkillName.Trim(), maxID + 1);
 
-            
             skills.Add(newSkill);
-            AssetDatabase.CreateAsset(newSkill, targetPath);
-            AssetDatabase.SaveAssets();
             LuaExportService.Export(new List<SkillSO>() { newSkill });
-            AssetDatabase.SaveAssets();
-            EditorUtility.SetDirty(newSkill);
+
             newSkillName = "";
             GUI.FocusControl(null);
+
             var action = new UndoAction
             {
                 type = UndoActionType.Create,
-                skill = newSkill
+                skill = newSkill,
+                luaOriginalPath = newSkill.filePath
             };
+
             unifiedUndoStack.Record(new List<UndoAction> { action });
         }
-
     }
     private void DrawValidationAndExportButtons()
     {
@@ -308,7 +289,6 @@ public class SkillEditorWindow : EditorWindow
     private void BuildSkillConfig()
     {
         SkillPipeline.Build();
-        Debug.Log("技能配置构建完成");
     }
     private void ExportLuaTemplates()
     {
