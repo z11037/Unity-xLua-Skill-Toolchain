@@ -136,8 +136,9 @@ public class SkillEditorWindow : EditorWindow
                 // 删除对应的 .meta 文件
                 string metaPath = recycleBinPath + ".meta";
                 if (System.IO.File.Exists(metaPath))
+                {
                     System.IO.File.Delete(metaPath);
-
+                }
                 AssetDatabase.Refresh();
                 Debug.Log("回收站已清空。");
             }
@@ -154,69 +155,23 @@ public class SkillEditorWindow : EditorWindow
         var skillsToDelete = new List<SkillSO>(selectedSkills);
 
         // 确保回收站文件夹存在
-        if (!AssetDatabase.IsValidFolder(recycleBinPath))
-        {
-            string parent = System.IO.Path.GetDirectoryName(recycleBinPath);
-            string folder = System.IO.Path.GetFileName(recycleBinPath);
-            AssetDatabase.CreateFolder(parent, folder);
-        }
+        SkillRepository.EnsureRecycleBin();
 
         // 记录本次操作的所有撤销信息
         var actions = new List<UndoStack.UndoAction>();
 
         foreach (SkillSO skillToDelete in skillsToDelete)
         {
-            // 移动 .asset 文件到回收站
-            string currentPath = AssetDatabase.GetAssetPath(skillToDelete);
-            string fileName = System.IO.Path.GetFileName(currentPath);
-            string recyclePath = recycleBinPath + "/" + fileName;
+            UndoAction action = SkillRepository.MoveToRecycleBin(skillToDelete);
 
-            // 处理重名
-            int counter = 1;
-            while (System.IO.File.Exists(recyclePath))
+            if (action.skill != null)
             {
-                string nameNoExt = System.IO.Path.GetFileNameWithoutExtension(fileName);
-                recyclePath = recycleBinPath + "/" + nameNoExt + " " + counter + ".asset";
-                counter++;
+                actions.Add(action);
+
+                selectedSkills.Remove(skillToDelete);
+                skills.Remove(skillToDelete);
+                foldouts.Remove(skillToDelete);
             }
-
-            AssetDatabase.MoveAsset(currentPath, recyclePath);
-
-            var undoAction = new UndoAction
-            {
-                type = UndoActionType.Delete,
-                skill = skillToDelete,
-                originalPath = currentPath,
-                recyclePath = recyclePath,  // recyclePath 是上面计算好的实际路径
-            };
-
-            // 移动关联 Lua 文件
-            if (!string.IsNullOrEmpty(skillToDelete.filePath))
-            {
-                string luaCurrentPath =skillToDelete.filePath.Replace("\\", "/");
-                if (File.Exists(luaCurrentPath))
-                {
-                    string luaFileName = Path.GetFileName(luaCurrentPath);
-                    string luaRecyclePath =recycleBinPath + "/" + luaFileName;
-                    string error = AssetDatabase.MoveAsset( luaCurrentPath,luaRecyclePath);
-                    if (!string.IsNullOrEmpty(error))
-                    {
-                        Debug.LogError("移动Lua失败：" + error);
-                    }
-                    else
-                    {
-                        undoAction.luaOriginalPath = luaCurrentPath;
-                        undoAction.luaRecyclePath =luaRecyclePath;
-                    }
-                }
-            
-        }
-            // 记录本次操作，用于撤销
-            actions.Add(undoAction);
-            // 从内存列表移除
-            selectedSkills.Remove(skillToDelete);
-            skills.Remove(skillToDelete);
-            foldouts.Remove(skillToDelete);
         }
 
         // 把本次所有删除操作压入统一撤销栈
@@ -357,59 +312,20 @@ public class SkillEditorWindow : EditorWindow
 
     public void RestoreFromRecycleBin(SkillSO recycleSkill)
     {
-        string recyclePath =AssetDatabase.GetAssetPath(recycleSkill);
-        string fileName =Path.GetFileName(recyclePath);
-        string targetPath =SkillPathConfig.SkillFolder + "/" + fileName;
+        UndoAction action = SkillRepository.RestoreFromRecycleBin(recycleSkill);
 
-        int counter = 1;
-
-        while (File.Exists(targetPath))
+        if (action.skill == null)
         {
-            string name =Path.GetFileNameWithoutExtension(fileName);
-            targetPath = SkillPathConfig.SkillFolder + "/" +name + " " +counter + ".asset";
-            counter++;
+            return;
         }
 
-        AssetDatabase.MoveAsset(recyclePath,targetPath);
+        unifiedUndoStack.Record(new List<UndoStack.UndoAction> { action });
 
-        var action = new UndoStack.UndoAction
-        {
-            type = UndoStack.UndoActionType.Restore,
-
-            // 注意方向
-            recyclePath = recyclePath,
-            originalPath = targetPath,
-        };
-
-
-        RestoreLuaFile(recycleSkill,ref action);
-
-        unifiedUndoStack.Record(new List<UndoStack.UndoAction>{action});
         AssetDatabase.Refresh();
         LoadSkillData();
         Repaint();
     }
-    private void RestoreLuaFile(SkillSO skill, ref UndoStack.UndoAction action)
-    {
-        if (string.IsNullOrEmpty(skill.filePath))
-            return;
-        string luaName = Path.GetFileName(skill.filePath);
-        string recycleLua =Path.Combine(SkillPathConfig.RecycleBin,luaName).Replace("\\", "/");
-        if (!File.Exists(recycleLua))
-        {
-            Debug.LogWarning("找不到回收站Lua:" + recycleLua);
-            return;
-        }
-        string targetLua =skill.filePath.Replace("\\", "/");
-        string error = AssetDatabase.MoveAsset( recycleLua, targetLua);
-        action.luaRecyclePath = recycleLua;
-        action.luaOriginalPath = targetLua;
-        if (!string.IsNullOrEmpty(error))
-        {
-            Debug.LogError( "恢复Lua失败:" + error);
-        }
-    }
-
+    
     private void DrawSkillItem(SkillSO skill)
     {
         if (skill == null) return;
@@ -450,17 +366,16 @@ public class SkillEditorWindow : EditorWindow
             EditorGUI.EndDisabledGroup();
 
             // 可编辑字段
-            if (tagProp != null) EditorGUILayout.PropertyField(tagProp);
+            if (tagProp != null)
+            {
+                EditorGUILayout.PropertyField(tagProp);
+            }
             EditorGUILayout.PropertyField(nameProp);
             EditorGUILayout.PropertyField(cooldownProp);
 
             //lua脚本路径
             
-            EditorGUILayout.LabelField(
-                "Lua脚本",
-                string.IsNullOrEmpty(skill.filePath)
-                    ? "未绑定"
-                    : skill.filePath);
+            EditorGUILayout.LabelField("Lua脚本", string.IsNullOrEmpty(skill.filePath) ? "未绑定" : skill.filePath);
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button("绑定Lua脚本"))
             {
@@ -487,7 +402,9 @@ public class SkillEditorWindow : EditorWindow
 
                 // 只有选了 Buff 才显示目标选择
                 if (buffProp.objectReferenceValue != null && targetProp != null)
+                {
                     EditorGUILayout.PropertyField(targetProp);
+                }
             }
 
             if (EditorGUI.EndChangeCheck())
@@ -506,21 +423,15 @@ public class SkillEditorWindow : EditorWindow
     private void BindLuaScript(SkillSO skill)
     {
         string absolutePath =
-            EditorUtility.OpenFilePanel(
-                "选择Lua脚本",
-                Application.dataPath,
-                "lua");
+            EditorUtility.OpenFilePanel("选择Lua脚本",Application.dataPath, "lua");
 
 
         if (string.IsNullOrEmpty(absolutePath))
+        {
             return;
-
-
-        string assetPath =
-            "Assets" +
-            absolutePath
-            .Replace(Application.dataPath, "")
-            .Replace("\\", "/");
+        }
+            
+        string assetPath ="Assets" + absolutePath .Replace(Application.dataPath, "") .Replace("\\", "/");
 
         skill.filePath = assetPath;
 
