@@ -17,6 +17,32 @@ public static class LuaExportService
         if (string.IsNullOrWhiteSpace(skill.skillName))
             return;
 
+        // 已有引用优先，导出模板不能覆盖手动绑定或共享脚本。
+        if (skill.luaScript != null)
+        {
+            if (!SkillLuaReferenceUtility.IsLuaPath(AssetDatabase.GetAssetPath(skill.luaScript)))
+            {
+                throw new System.InvalidOperationException($"技能 {skill.skillID} 引用了非 Lua 资源。" );
+            }
+            skill.SyncLuaPath();
+            EditorUtility.SetDirty(skill);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(skill.filePath))
+        {
+            TextAsset existingScript = SkillLuaReferenceUtility.LoadScript(skill.filePath);
+            if (existingScript == null)
+            {
+                throw new System.InvalidOperationException($"技能 {skill.skillID} 的 Lua 路径无效：{skill.filePath}，请重新绑定后再导出。");
+            }
+
+            skill.luaScript = existingScript;
+            skill.SyncLuaPath();
+            EditorUtility.SetDirty(skill);
+            return;
+        }
+
         string luaContent =
 $@"-- ====================================
 -- Skill : {skill.skillName}
@@ -48,23 +74,19 @@ return skill
         string luaPath = Path.Combine(LuaFolder, fileName);
         string relativePath = "Assets/luaScript/" + fileName;
 
-        SerializedObject so = new SerializedObject(skill);
-        // 文件已存在则跳过
-        if (File.Exists(luaPath))
+        if (!File.Exists(luaPath))
         {
-            so.FindProperty("filePath").stringValue = relativePath;
-            so.ApplyModifiedPropertiesWithoutUndo();
-
-            EditorUtility.SetDirty(skill);
-
-            return;
+            File.WriteAllText(luaPath, luaContent);
         }
-        File.WriteAllText(luaPath, luaContent);
 
-       
-        so.FindProperty("filePath").stringValue = relativePath;
-        so.ApplyModifiedPropertiesWithoutUndo();
+        TextAsset script = SkillLuaReferenceUtility.LoadScript(relativePath);
+        if (script == null)
+        {
+            throw new System.InvalidOperationException($"Lua 资源导入失败：{relativePath}");
+        }
 
+        skill.luaScript = script;
+        skill.SyncLuaPath();
         EditorUtility.SetDirty(skill);
     }
     public static BuildResult ExportAll()
@@ -86,6 +108,7 @@ return skill
             ExportSkill(skill);
         }
 
+        AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
     }
 }

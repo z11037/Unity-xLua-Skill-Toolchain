@@ -36,14 +36,24 @@ public static class SkillValidator
         }
         foreach (var skill in skills)
         {
-
-            if (string.IsNullOrWhiteSpace(skill.filePath))
+            if (skill.luaScript != null)
             {
-                Debug.LogWarning(
-                    $"警告：技能 {skill.skillName} 的 Lua 引用丢失");
+                string path = AssetDatabase.GetAssetPath(skill.luaScript);
+                if (!SkillLuaReferenceUtility.IsLuaPath(path))
+                {
+                    errors.Add($"技能 {skill.skillName} 引用的资源不是 .lua 文件。");
+                }
+                else if (path != skill.filePath)
+                {
+                    errors.Add($"技能 {skill.skillName} 的 Lua 引用与路径不一致，请执行同步Lua资源引用。");
+                }
             }
+            else if (!string.IsNullOrWhiteSpace(skill.filePath) && (!SkillLuaReferenceUtility.IsLuaPath(skill.filePath.Replace('\\', '/')) || !System.IO.File.Exists(skill.filePath)))
+            {
+                errors.Add($"技能 {skill.skillName} 的 Lua 文件不存在或路径无效：{skill.filePath}");
+            }
+            // 未绑定的新技能允许通过构建，后续模板导出步骤负责创建资源。
         }
-
         return errors;
     }
 }
