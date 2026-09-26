@@ -28,6 +28,11 @@ public class RecycleBinArea
         foreach (string guid in recycleGuids)
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
+            // 撤销新建所暂存的资源，只通过原生重做恢复。
+            if (path.StartsWith(SkillResourceUndoJournal.CachePath + "/", System.StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
             SkillSO recycleSkill = AssetDatabase.LoadAssetAtPath<SkillSO>(path);
             if (recycleSkill == null) continue;
 

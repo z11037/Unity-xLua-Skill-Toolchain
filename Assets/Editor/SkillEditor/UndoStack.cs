@@ -1,127 +1,25 @@
-using System.Collections;
+using System;
 using System.Collections.Generic;
-using UnityEditor;
 using UnityEngine;
+
+// å…¼å®¹ Repository çš„æ“ä½œè®°å½•å…¥å£ï¼Œæ—¶é—´çº¿äº¤ç»™ Unity ç®¡ç†ã€‚
 public class UndoStack
 {
     public enum UndoActionType { Create, Delete, Restore }
 
+    [Serializable]
     public struct UndoAction
     {
         public UndoActionType type;
         public ScriptableObject skill;
-        public string originalPath;   // É¾³ıÊ±ÓÃ£ºÔ­Â·¾¶
-        public string recyclePath;    // É¾³ıÊ±ÓÃ£º»ØÊÕÕ¾Â·¾¶
-        public string luaOriginalPath;//luaÔ­Â·¾¶
-        public string luaRecyclePath;//lua»ØÊÕÕ¾Â·¾¶
+        public string originalPath;
+        public string recyclePath;
+        public string luaOriginalPath;
+        public string luaRecyclePath;
     }
-
-    private const int MaxUndoSteps = 50;
-    private readonly List<List<UndoAction>> history = new();
 
     public void Record(List<UndoAction> actions)
     {
-        if (actions == null || actions.Count == 0)
-            return;
-        history.Add(new List<UndoAction>(actions));
-        while (history.Count > MaxUndoSteps)
-        {
-            history.RemoveAt(0);
-            Debug.LogWarning($"³·ÏúÀúÊ·ÒÑ´ïµ½ÉÏÏŞ {MaxUndoSteps} ²½£¬×îÔçµÄ²Ù×÷¼ÇÂ¼ÒÑ±»ÒÆ³ı");
-        }
+        SkillResourceUndoJournal.instance.Record(actions);
     }
-
-    // ³·Ïú×î½üÒ»´Î²Ù×÷£¬·µ»Ø±»³·ÏúµÄ²Ù×÷ÁĞ±í
-    public List<UndoAction> Undo()
-    {
-        if (history.Count == 0) return null;
-        var last = history[history.Count - 1];
-        history.RemoveAt(history.Count - 1);
-        return last;
-    }
-
-    // Çå¿ÕÀúÊ·
-    public void Clear()
-    {
-        history.Clear();
-    }
-
-    public bool HasUndo()
-    {
-        return history.Count > 0;
-    }
-    public void PerformUndo()
-    {
-        // ´Ó³·ÏúÕ»ÖĞµ¯³ö×î½üÒ»´Î²Ù×÷
-        var lastActions = Undo();
-        // Õ»Îª¿Õ£¬ÎŞĞè´¦Àí
-        if (lastActions == null)
-            return;
-
-        foreach (var action in lastActions)
-        {
-            switch (action.type)
-            {
-                case UndoStack.UndoActionType.Create:
-                    // ³·Ïú¡°´´½¨¼¼ÄÜ¡±£ºÉ¾³ı¶ÔÓ¦µÄ×Ê²úÎÄ¼ş
-                    string path = AssetDatabase.GetAssetPath(action.skill);
-                    if (!string.IsNullOrEmpty(path))
-                        AssetDatabase.DeleteAsset(path);
-                    break;
-
-                case UndoStack.UndoActionType.Delete:
-                    {
-
-                        // »Ö¸´SkillSO
-                        string error = AssetDatabase.MoveAsset(
-                            action.recyclePath,
-                            action.originalPath);
-
-                        if (!string.IsNullOrEmpty(error))
-                            Debug.LogError(error);
-
-
-                        // »Ö¸´Lua
-                        if (!string.IsNullOrEmpty(action.luaRecyclePath))
-                        {
-                            error = AssetDatabase.MoveAsset(
-                                action.luaRecyclePath,
-                                action.luaOriginalPath);
-
-                            if (!string.IsNullOrEmpty(error))
-                                Debug.LogError(error);
-                        }
-
-                        break;
-                    }
-
-                case UndoStack.UndoActionType.Restore:
-                    {
-                        // É¾³ıSkillSO
-                        string error = AssetDatabase.MoveAsset(
-                            action.originalPath,
-                            action.recyclePath);
-
-                        if (!string.IsNullOrEmpty(error))
-                            Debug.LogError(error);
-
-
-                        // É¾³ıLua
-                        if (!string.IsNullOrEmpty(action.luaRecyclePath))
-                        {
-                            error = AssetDatabase.MoveAsset(
-                                action.luaOriginalPath,
-                                action.luaRecyclePath);
-
-                            if (!string.IsNullOrEmpty(error))
-                                Debug.LogError(error);
-                        }
-                        break;
-                    }
-            }
-        }
-
-        
-    }
-
 }

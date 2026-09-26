@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
@@ -35,12 +35,21 @@ public class SkillEditorWindow : EditorWindow
 
     private void OnEnable()
     {
+        SkillResourceUndoJournal.Changed += RefreshAfterUndo;
         LoadSkillData();
         recycleBinArea = new RecycleBinArea(recycleBinPath, this);
     }
 
     private void OnGUI()
     {
+        if (!string.IsNullOrEmpty(SkillResourceUndoJournal.instance.Failure))
+        {
+            EditorGUILayout.HelpBox(SkillResourceUndoJournal.instance.Failure, MessageType.Error);
+            if (GUILayout.Button("重试资源撤销/重做"))
+            {
+                SkillResourceUndoJournal.instance.Synchronize();
+            }
+        }
         DrawToolbar();                    // 刷新、删除选中
         DrawCreateSkillPanel();           // 新增技能输入框 + 添加按钮
         DrawValidationAndExportButtons(); // 校验、保存、导出Lua
@@ -76,28 +85,19 @@ public class SkillEditorWindow : EditorWindow
 
             lastValidationTime = EditorApplication.timeSinceStartup;
         }
-        HandleUndoShortcut();
     }
 
-    //暂时妥协的结果
-    private void HandleUndoShortcut()
+    private void OnDisable()
     {
-        Event e = Event.current;
+        SkillResourceUndoJournal.Changed -= RefreshAfterUndo;
+    }
 
-        if (e.type != EventType.KeyDown ||
-            !e.control ||
-            e.keyCode != KeyCode.Z)
-            return;
-
-
-        if (unifiedUndoStack.HasUndo())
-        {
-            unifiedUndoStack.PerformUndo();
-            // 刷新数据并重绘UI
-            LoadSkillData();
-            Repaint();
-            e.Use();
-        }
+    private void RefreshAfterUndo()
+    {
+        LoadSkillData();
+        selectedSkills.Clear();
+        foldouts.Clear();
+        Repaint();
     }
 
     private void DrawToolbar()
@@ -122,15 +122,21 @@ public class SkillEditorWindow : EditorWindow
     }
     private void ClearRecycleBin()
     {
+        if (!SkillResourceUndoJournal.instance.CanOperate())
+        {
+            return;
+        }
+
         if (System.IO.Directory.Exists(SkillPathConfig.RecycleBin))
         {
             // 确认对话框，防止误触
             if (EditorUtility.DisplayDialog(
                 "清空回收站",
-                "确定要永久删除回收站中的所有技能吗？此操作不可撤销。",
+                "确定要永久删除回收站中的所有技能及撤销暂存资源吗？此操作不可撤销，并会清除本工具的资源撤销/重做记录。",
                 "确定",
                 "取消"))
             {
+                SkillResourceUndoJournal.instance.ClearHistory();
                 // 删除回收站文件夹
                 System.IO.Directory.Delete(recycleBinPath, true);
                 // 删除对应的 .meta 文件
@@ -150,31 +156,25 @@ public class SkillEditorWindow : EditorWindow
     }
     private void DeleteSelectedSkills()
     {
+        if (!SkillResourceUndoJournal.instance.CanOperate())
+        {
+            return;
+        }
+
         if (selectedSkills.Count == 0) return;
 
         var skillsToDelete = new List<SkillSO>(selectedSkills);
 
-        // 确保回收站文件夹存在
-        SkillRepository.EnsureRecycleBin();
-
-        // 记录本次操作的所有撤销信息
-        var actions = new List<UndoStack.UndoAction>();
-
-        foreach (SkillSO skillToDelete in skillsToDelete)
+        // Repository 按整批计算共享引用，并在移动前完成归零确认。
+        List<UndoStack.UndoAction> actions = SkillRepository.MoveToRecycleBin(skillsToDelete);
+        foreach (UndoStack.UndoAction action in actions)
         {
-            UndoAction action = SkillRepository.MoveToRecycleBin(skillToDelete);
-
-            if (action.skill != null)
-            {
-                actions.Add(action);
-
-                selectedSkills.Remove(skillToDelete);
-                skills.Remove(skillToDelete);
-                foldouts.Remove(skillToDelete);
-            }
+            SkillSO deletedSkill = action.skill as SkillSO;
+            selectedSkills.Remove(deletedSkill);
+            skills.Remove(deletedSkill);
+            foldouts.Remove(deletedSkill);
         }
-
-        // 把本次所有删除操作压入统一撤销栈
+        // 将本次批量资源操作登记到原生撤销时间线。
         unifiedUndoStack.Record(actions);
 
         AssetDatabase.Refresh();
@@ -194,6 +194,11 @@ public class SkillEditorWindow : EditorWindow
 
     private void CreateNewSkill()
     {
+        if (!SkillResourceUndoJournal.instance.CanOperate())
+        {
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(newSkillName))
         {
             int maxID = skills.Count > 0 ? skills.Max(s => s.skillID) : 1000;
@@ -201,7 +206,6 @@ public class SkillEditorWindow : EditorWindow
             SkillSO newSkill = SkillRepository.Create(newSkillName.Trim(), maxID + 1);
 
             skills.Add(newSkill);
-            LuaExportService.Export(new List<SkillSO>() { newSkill });
 
             newSkillName = "";
             GUI.FocusControl(null);
@@ -209,13 +213,13 @@ public class SkillEditorWindow : EditorWindow
             var action = new UndoAction
             {
                 type = UndoActionType.Create,
-                skill = newSkill,
-                luaOriginalPath = newSkill.filePath
+                skill = newSkill
             };
 
             unifiedUndoStack.Record(new List<UndoAction> { action });
         }
     }
+
     private void DrawValidationAndExportButtons()
     {
         if (GUILayout.Button("保存修改"))
@@ -312,6 +316,11 @@ public class SkillEditorWindow : EditorWindow
 
     public void RestoreFromRecycleBin(SkillSO recycleSkill)
     {
+        if (!SkillResourceUndoJournal.instance.CanOperate())
+        {
+            return;
+        }
+
         UndoAction action = SkillRepository.RestoreFromRecycleBin(recycleSkill);
 
         if (action.skill == null)
@@ -339,6 +348,7 @@ public class SkillEditorWindow : EditorWindow
         SerializedProperty tagProp = so.FindProperty("tag");
         SerializedProperty buffProp = so.FindProperty("associatedBuff");
         SerializedProperty targetProp = so.FindProperty("buffTarget");
+        SerializedProperty luaProp = so.FindProperty("luaScript");
 
         EditorGUILayout.BeginHorizontal();
 
@@ -373,28 +383,36 @@ public class SkillEditorWindow : EditorWindow
             EditorGUILayout.PropertyField(nameProp);
             EditorGUILayout.PropertyField(cooldownProp);
 
-            //lua脚本路径
-            
-            EditorGUILayout.LabelField("Lua脚本", string.IsNullOrEmpty(skill.filePath) ? "未绑定" : skill.filePath);
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("绑定Lua脚本"))
+            // 使用资源引用选择 Lua，并保留路径展示以兼容运行时加载。
+            EditorGUI.BeginChangeCheck();
+            TextAsset selectedLua = (TextAsset)EditorGUILayout.ObjectField("Lua资源", luaProp.objectReferenceValue, typeof(TextAsset), false);
+            if (EditorGUI.EndChangeCheck())
             {
-                BindLuaScript(skill);
-            }
-            if (GUILayout.Button("定位", GUILayout.Width(50)))
-            {
-                string luaPath = skill.filePath;
-                if (System.IO.File.Exists(luaPath))
+                string selectedPath = selectedLua == null ? string.Empty : AssetDatabase.GetAssetPath(selectedLua);
+                if (selectedLua == null || SkillLuaReferenceUtility.IsLuaPath(selectedPath))
                 {
-                    // 在系统文件管理器中高亮对应的 Lua 文件
-                    EditorUtility.RevealInFinder(luaPath);
+                    luaProp.objectReferenceValue = selectedLua;
+                    so.FindProperty("filePath").stringValue = selectedPath;
                 }
                 else
                 {
-                    Debug.LogWarning($"Lua 脚本不存在：{luaPath}");
+                    Debug.LogWarning("请选择 .lua 文件，不能绑定普通文本文件。");
                 }
             }
-            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.LabelField("Lua路径", so.FindProperty("filePath").stringValue);
+            EditorGUILayout.LabelField("Lua有效引用数", SkillRepository.GetLuaReferenceCount(SkillRepository.GetLuaGuid(skill)).ToString());
+            if (GUILayout.Button("定位"))
+            {
+                if (luaProp.objectReferenceValue != null)
+                {
+                    EditorGUIUtility.PingObject(luaProp.objectReferenceValue);
+                }
+                else if (File.Exists(skill.filePath))
+                {
+                    EditorUtility.RevealInFinder(skill.filePath);
+                }
+            }
             //buffSO引用
             if (buffProp != null)
             {
@@ -410,6 +428,7 @@ public class SkillEditorWindow : EditorWindow
             if (EditorGUI.EndChangeCheck())
             {
                 so.ApplyModifiedProperties();
+                SkillRepository.InvalidateLuaReferenceCounts();
                 EditorUtility.SetDirty(skill);
             }
 
@@ -422,23 +441,40 @@ public class SkillEditorWindow : EditorWindow
 
     private void BindLuaScript(SkillSO skill)
     {
-        string absolutePath =
-            EditorUtility.OpenFilePanel("选择Lua脚本",Application.dataPath, "lua");
-
+        string absolutePath = EditorUtility.OpenFilePanel("选择Lua脚本", Application.dataPath, "lua");
 
         if (string.IsNullOrEmpty(absolutePath))
         {
             return;
         }
-            
-        string assetPath ="Assets" + absolutePath .Replace(Application.dataPath, "") .Replace("\\", "/");
 
-        skill.filePath = assetPath;
+        string assetsPath = Application.dataPath.Replace("\\", "/");
+        string selectedPath = absolutePath.Replace("\\", "/");
+
+        if (!selectedPath.StartsWith(assetsPath + "/", System.StringComparison.OrdinalIgnoreCase))
+        {
+            Debug.LogError("Lua文件必须位于Assets目录下");
+            return;
+        }
+
+        string assetPath = "Assets" + selectedPath.Substring(assetsPath.Length);
+
+        TextAsset script = SkillLuaReferenceUtility.LoadScript(assetPath);
+        if (script == null)
+        {
+            Debug.LogError("Lua 资源导入失败，保留原绑定。");
+            return;
+        }
+
+        Undo.RecordObject(skill, "绑定Lua资源");
+        skill.luaScript = script;
+        skill.SyncLuaPath();
+        SkillRepository.InvalidateLuaReferenceCounts();
 
         EditorUtility.SetDirty(skill);
-
         AssetDatabase.SaveAssets();
     }
+
     private void DrawSelectedInfo()
     {
         if (selectedSkills.Count > 0)
