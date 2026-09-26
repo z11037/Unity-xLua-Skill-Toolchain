@@ -46,6 +46,32 @@ public class BuffManager : MonoBehaviour
                 continue;
             }
 
+            // 先结算 Tick，此时每个 Buff 的剩余时间仍是本帧开始时的值。
+            for (int i = runtime.TickBuffs.Count - 1; i >= 0; i--)
+            {
+                Buff buff = runtime.TickBuffs[i];
+
+                if (buff == null)
+                {
+                    continue;
+                }
+
+                UpdateTick(runtime, buff, deltaTime);
+
+                if (runtime.IsDead)
+                {
+                    break;
+                }
+            }
+
+            // 退出 Tick 遍历后再统一清理，避免遍历过程中列表索引失效。
+            if (runtime.IsDead)
+            {
+                RemoveAllBuffs(runtime);
+                removeCache.Add(runtime);
+                continue;
+            }
+
             for (int i = runtime.Buffs.Count - 1; i >= 0; i--)
             {
                 Buff buff = runtime.Buffs[i];
@@ -56,20 +82,6 @@ public class BuffManager : MonoBehaviour
                 }
 
                 UpdateDuration(runtime, buff, deltaTime);
-            }
-
-
-            for (int i = runtime.TickBuffs.Count - 1; i >= 0; i--)
-            {
-                Buff buff = runtime.TickBuffs[i];
-
-                if (buff == null)
-                {
-                    continue;
-                }
-
-
-                UpdateTick(buff, deltaTime);
             }
 
             if (runtime.Buffs.Count == 0)
@@ -172,12 +184,17 @@ public class BuffManager : MonoBehaviour
         Log.Buff($"[BuffManager] Buff 到期移除：{buff.DisplayName}");
     }
 
-    private void UpdateTick(Buff buff, float deltaTime)
+    private void UpdateTick(CharacterRuntime runtime, Buff buff, float deltaTime)
     {
         int tickCount = buff.UpdateTick(deltaTime);
 
         for (int i = 0; i < tickCount; i++)
         {
+            if (runtime.IsDead)
+            {
+                break;
+            }
+
             ExecuteTick(buff);
         }
     }
