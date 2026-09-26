@@ -8,6 +8,7 @@ public sealed class CharacterRuntimeManager : MonoBehaviour
     private readonly Dictionary<int, CharacterRuntime> runtimes = new Dictionary<int, CharacterRuntime>();
 
     private bool isDisposed;
+    private readonly HashSet<int> releasingIds = new HashSet<int>();
     private void Awake()
     {
         if (Instance != null && Instance != this)
@@ -24,12 +25,16 @@ public sealed class CharacterRuntimeManager : MonoBehaviour
 
     public CharacterRuntime RegisterCharacter(int characterId, float initialMaxHealth, float initialAttack, float initialMoveSpeed)
     {
+        if (isDisposed || releasingIds.Contains(characterId))
+        {
+            throw new System.InvalidOperationException("角色管理器或同 ID 角色正在释放，不能重新注册。");
+        }
         if (runtimes.TryGetValue(characterId, out CharacterRuntime oldRuntime))
         {
             Debug.LogWarning($"角色 {characterId} 已注册，将替换旧 Runtime");
 
-            oldRuntime.Dispose();
             runtimes.Remove(characterId);
+            ReleaseRuntime(oldRuntime);
         }
 
         CharacterRuntime runtime = new CharacterRuntime(characterId, initialMaxHealth, initialAttack, initialMoveSpeed);
@@ -47,8 +52,8 @@ public sealed class CharacterRuntimeManager : MonoBehaviour
             return false;
         }
 
-        runtime.Dispose();
         runtimes.Remove(characterId);
+        ReleaseRuntime(runtime);
 
         Debug.Log($"角色 {characterId} Runtime 已注销");
 
@@ -80,14 +85,27 @@ public sealed class CharacterRuntimeManager : MonoBehaviour
 
         isDisposed = true;
 
-        foreach (CharacterRuntime runtime in runtimes.Values)
+        var snapshot = new List<CharacterRuntime>(runtimes.Values);
+        runtimes.Clear();
+        foreach (CharacterRuntime runtime in snapshot)
+        {
+            ReleaseRuntime(runtime);
+        }
+
+        Debug.Log("CharacterRuntimeManager 已释放全部 Runtime");
+    }
+
+    private void ReleaseRuntime(CharacterRuntime runtime)
+    {
+        releasingIds.Add(runtime.CharacterId);
+        try
         {
             runtime.Dispose();
         }
-
-        runtimes.Clear();
-
-        Debug.Log("CharacterRuntimeManager 已释放全部 Runtime");
+        finally
+        {
+            releasingIds.Remove(runtime.CharacterId);
+        }
     }
 
     private void OnDestroy()

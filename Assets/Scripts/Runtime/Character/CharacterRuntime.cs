@@ -11,11 +11,14 @@ public sealed class CharacterRuntime : IDisposable
     public FinalState MoveSpeed { get; private set; }
     public float CurrentHealth { get; private set; }
 
+    public bool IsDisposed { get; private set; }
+
     public bool IsDead => CurrentHealth <= 0f;
 
     private readonly Dictionary<int, Skill> skills = new Dictionary<int, Skill>();
     private readonly List<Buff> buffs = new List<Buff>();
     private readonly List<Buff> tickBuffs = new List<Buff>();
+    private readonly HashSet<Buff> buffMembership = new HashSet<Buff>();
     public event Action<float, float> OnHealthChanged;
     public event Action OnDied;
     public IReadOnlyList<Buff> Buffs
@@ -50,7 +53,7 @@ public sealed class CharacterRuntime : IDisposable
 
     public void TakeDamage(int damage)
     {
-        if (damage <= 0 || IsDead)
+        if (damage <= 0 || IsDead || IsDisposed)
         {
             return;
         }
@@ -74,7 +77,7 @@ public sealed class CharacterRuntime : IDisposable
 
     public void Heal(int amount)
     {
-        if (amount <= 0 || IsDead)
+        if (amount <= 0 || IsDead || IsDisposed)
         {
             return;
         }
@@ -172,7 +175,7 @@ public sealed class CharacterRuntime : IDisposable
 
     public bool TryCast(int skillId, Character caster, Character target)
     {
-        if (IsDead)
+        if (IsDead || IsDisposed)
         {
             Log.Skill($"角色 {CharacterId} 已死亡，无法释放技能 {skillId}");
             return false;
@@ -237,7 +240,7 @@ public sealed class CharacterRuntime : IDisposable
         return FindBuff(config.buffID);
     }
 
-    public bool AddBuff(Buff buff)
+    internal bool AddBuff(Buff buff)
     {
         if (buff == null)
         {
@@ -258,6 +261,7 @@ public sealed class CharacterRuntime : IDisposable
         }
 
         buffs.Add(buff);
+        buffMembership.Add(buff);
 
         if (buff.NeedTick)
         {
@@ -267,16 +271,25 @@ public sealed class CharacterRuntime : IDisposable
         return true;
     }
 
-    public bool RemoveBuff(Buff buff)
+    internal bool ContainsBuff(Buff buff)
+    {
+        return buff != null && buffMembership.Contains(buff);
+    }
+
+    internal bool DetachBuff(Buff buff)
     {
         if (buff == null)
         {
             return false;
         }
 
-        bool removed = buffs.Remove(buff);
+        bool removed = buffMembership.Remove(buff);
+        if (removed)
+        {
+            buffs.Remove(buff);
+        }
 
-        if (removed && buff.NeedTick)
+        if (removed)
         {
             tickBuffs.Remove(buff);
         }
@@ -294,6 +307,16 @@ public sealed class CharacterRuntime : IDisposable
 
     public void Dispose()
     {
+        if (IsDisposed)
+        {
+            return;
+        }
+        // 先阻止回调重新施加，再完整撤销仍然生效的效果。
+        IsDisposed = true;
+        if (BuffManager.Instance != null)
+        {
+            BuffManager.Instance.RemoveAllBuffs(this);
+        }
         foreach (Skill skill in skills.Values)
         {
             skill.Dispose();
@@ -308,6 +331,7 @@ public sealed class CharacterRuntime : IDisposable
 
         buffs.Clear();
         tickBuffs.Clear();
+        buffMembership.Clear();
         OnHealthChanged = null;
         OnDied = null;
         Debug.Log($"角色 {CharacterId} 的 CharacterRuntime 已释放");

@@ -16,14 +16,19 @@ public class Buff
 
     public Character Owner { get; private set; }
     public Character Source { get; private set; }
+    public CharacterRuntime TargetRuntime { get; private set; }
 
     public bool IsExpired => remainingTime <= 0d;
-    public int MaxStack => Mathf.Max(1, Config.maxStack);
+    public int MaxStack => Config == null ? 0 : Mathf.Max(1, Config.maxStack);
 
     public string DisplayName
     {
         get
         {
+            if (Config == null)
+            {
+                return "未激活Buff";
+            }
             if (!string.IsNullOrWhiteSpace(Config.buffName))
             {
                 return Config.buffName;
@@ -33,7 +38,16 @@ public class Buff
         }
     }
 
-    public Buff(BuffSO config, Character source, Character owner)
+    internal Buff()
+    {
+    }
+
+    public Buff(BuffSO config, Character source, Character owner, CharacterRuntime targetRuntime = null)
+    {
+        Initialize(config, source, owner, targetRuntime);
+    }
+
+    internal void Initialize(BuffSO config, Character source, Character owner, CharacterRuntime targetRuntime)
     {
         if (config == null)
         {
@@ -48,10 +62,23 @@ public class Buff
         Config = config;
         Source = source;
         Owner = owner;
+        TargetRuntime = targetRuntime;
 
         CurrentStack = 1;
         remainingTime = Math.Max(0d, config.duration);
         tickAccumulator = 0d;
+    }
+
+    // 归还时清除全部状态和强引用；下一次获取必须按新配置重新初始化。
+    internal void ResetForPool()
+    {
+        CurrentStack = 0;
+        remainingTime = 0d;
+        tickAccumulator = 0d;
+        Config = null;
+        Owner = null;
+        Source = null;
+        TargetRuntime = null;
     }
 
     public void UpdateDuration(float deltaTime)
@@ -91,6 +118,10 @@ public class Buff
 
     public bool Reapply()
     {
+        if (Config == null)
+        {
+            return false;
+        }
         bool stackIncreased = false;
 
         if (CurrentStack < MaxStack)
@@ -105,6 +136,6 @@ public class Buff
 
     public void RefreshDuration()
     {
-        remainingTime = Math.Max(0d, Config.duration);
+        remainingTime = Config == null ? 0d : Math.Max(0d, Config.duration);
     }
 }

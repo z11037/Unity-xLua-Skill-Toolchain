@@ -10,7 +10,37 @@ public class BuffManager : MonoBehaviour
 
     private readonly HashSet<CharacterRuntime> activeRuntimes = new HashSet<CharacterRuntime>();
 
-    private readonly List<CharacterRuntime> removeCache = new List<CharacterRuntime>();
+    private readonly List<CharacterRuntime> runtimeSnapshot = new List<CharacterRuntime>();
+    private readonly List<Buff> buffSnapshot = new List<Buff>();
+    private readonly HashSet<CharacterRuntime> clearingRuntimes = new HashSet<CharacterRuntime>();
+    private bool isShuttingDown;
+    private readonly BuffPool pool = new BuffPool();
+    private readonly List<Buff> pendingReturns = new List<Buff>();
+    private int operationDepth;
+
+    public int CreatedBuffCount => pool.CreatedCount;
+    public int BuffRentCount => pool.RentCount;
+    public int AvailableBuffCount => pool.AvailableCount;
+    public int RentedBuffCount => pool.RentedCount;
+
+    private void EndOperation()
+    {
+        operationDepth--;
+        if (operationDepth != 0)
+        {
+            return;
+        }
+        // 整个更新或最外层调用结束后才允许复用，防止快照和回调继续访问旧实例。
+        foreach (Buff buff in pendingReturns)
+        {
+            pool.Return(buff);
+        }
+        pendingReturns.Clear();
+        if (isShuttingDown)
+        {
+            pool.ClearAvailable();
+        }
+    }
 
     private void Awake()
     {
@@ -27,80 +57,97 @@ public class BuffManager : MonoBehaviour
 
     private void Update()
     {
-
-        float deltaTime = Time.deltaTime;
-        removeCache.Clear();
-
-        foreach (CharacterRuntime runtime in activeRuntimes)
+        operationDepth++;
+        try
         {
+            UpdateCore();
+        }
+        finally
+        {
+            runtimeSnapshot.Clear();
+            buffSnapshot.Clear();
+            EndOperation();
+        }
+    }
 
-            if (runtime == null)
+    private void UpdateCore()
+    {
+        float deltaTime = Time.deltaTime;
+        // 回调可以移除 Buff、注销角色或给其他角色添加 Buff，遍历快照避免集合失效。
+        runtimeSnapshot.Clear();
+        runtimeSnapshot.AddRange(activeRuntimes);
+        foreach (CharacterRuntime runtime in runtimeSnapshot)
+        {
+            if (!activeRuntimes.Contains(runtime))
             {
                 continue;
             }
-
-            if (runtime.IsDead)
+            if (runtime.IsDead || runtime.IsDisposed)
             {
                 RemoveAllBuffs(runtime);
-                removeCache.Add(runtime);
                 continue;
             }
 
-            // 先结算 Tick，此时每个 Buff 的剩余时间仍是本帧开始时的值。
-            for (int i = runtime.TickBuffs.Count - 1; i >= 0; i--)
+            buffSnapshot.Clear();
+            buffSnapshot.AddRange(runtime.Buffs);
+            for (int i = buffSnapshot.Count - 1; i >= 0; i--)
             {
-                Buff buff = runtime.TickBuffs[i];
-
-                if (buff == null)
+                Buff buff = buffSnapshot[i];
+                if (!ContainsBuff(runtime, buff) || !buff.NeedTick)
                 {
                     continue;
                 }
-
                 UpdateTick(runtime, buff, deltaTime);
-
-                if (runtime.IsDead)
+                if (runtime.IsDead || runtime.IsDisposed)
                 {
                     break;
                 }
             }
-
-            // 退出 Tick 遍历后再统一清理，避免遍历过程中列表索引失效。
-            if (runtime.IsDead)
+            if (runtime.IsDead || runtime.IsDisposed)
             {
                 RemoveAllBuffs(runtime);
-                removeCache.Add(runtime);
                 continue;
             }
-
-            for (int i = runtime.Buffs.Count - 1; i >= 0; i--)
+            for (int i = buffSnapshot.Count - 1; i >= 0; i--)
             {
-                Buff buff = runtime.Buffs[i];
-
-                if (buff == null)
+                Buff buff = buffSnapshot[i];
+                if (ContainsBuff(runtime, buff))
                 {
-                    continue;
+                    UpdateDuration(runtime, buff, deltaTime);
                 }
-
-                UpdateDuration(runtime, buff, deltaTime);
-            }
-
-            if (runtime.Buffs.Count == 0)
-            {
-                removeCache.Add(runtime);
             }
         }
-
-        for (int i = 0; i < removeCache.Count; i++)
-        {
-            activeRuntimes.Remove(removeCache[i]);
-        }
-
+        // 避免空闲帧之间仍通过快照持有已注销角色。
+        runtimeSnapshot.Clear();
+        buffSnapshot.Clear();
     }
 
+    private static bool ContainsBuff(CharacterRuntime runtime, Buff buff)
+    {
+        return runtime.ContainsBuff(buff);
+    }
     private void OnDestroy()
+    {
+        operationDepth++;
+        try
+        {
+            OnDestroyCore();
+        }
+        finally
+        {
+            EndOperation();
+        }
+    }
+
+    private void OnDestroyCore()
     {
         if (Instance == this)
         {
+            isShuttingDown = true;
+            foreach (CharacterRuntime runtime in new List<CharacterRuntime>(activeRuntimes))
+            {
+                RemoveAllBuffs(runtime);
+            }
             Instance = null;
         }
 
@@ -109,6 +156,23 @@ public class BuffManager : MonoBehaviour
 
     public void AddBuff(Character target, BuffSO config, Character source)
     {
+        operationDepth++;
+        try
+        {
+            AddBuffCore(target, config, source);
+        }
+        finally
+        {
+            EndOperation();
+        }
+    }
+
+    private void AddBuffCore(Character target, BuffSO config, Character source)
+    {
+        if (isShuttingDown)
+        {
+            return;
+        }
         if (target == null)
         {
             Log.Buff("[Warning] Buff 添加失败：目标角色为空");
@@ -135,6 +199,11 @@ public class BuffManager : MonoBehaviour
             return;
         }
 
+        if (runtime.IsDead || runtime.IsDisposed || clearingRuntimes.Contains(runtime))
+        {
+            return;
+        }
+
         Buff existingBuff = runtime.FindBuff(config.buffID);
 
         if (existingBuff != null)
@@ -146,29 +215,74 @@ public class BuffManager : MonoBehaviour
         CreateBuff(runtime, target, config, source);
     }
 
+    public bool RemoveBuff(CharacterRuntime runtime, Buff buff)
+    {
+        operationDepth++;
+        try
+        {
+            return RemoveBuffCore(runtime, buff);
+        }
+        finally
+        {
+            EndOperation();
+        }
+    }
+
+    private bool RemoveBuffCore(CharacterRuntime runtime, Buff buff)
+    {
+        if (runtime == null || buff == null || !runtime.DetachBuff(buff))
+        {
+            return false;
+        }
+        // 先脱离索引，移除回调即使再次请求移除，也不会重复扣除属性。
+        if (runtime.Buffs.Count == 0)
+        {
+            activeRuntimes.Remove(runtime);
+        }
+        try
+        {
+            ExecuteRemove(buff);
+        }
+        finally
+        {
+            pendingReturns.Add(buff);
+        }
+        return true;
+    }
+
     public void RemoveAllBuffs(CharacterRuntime runtime)
     {
-        if (runtime == null)
+        operationDepth++;
+        try
+        {
+            RemoveAllBuffsCore(runtime);
+        }
+        finally
+        {
+            EndOperation();
+        }
+    }
+
+    private void RemoveAllBuffsCore(CharacterRuntime runtime)
+    {
+        if (runtime == null || !clearingRuntimes.Add(runtime))
         {
             return;
         }
-
-        for (int i = runtime.Buffs.Count - 1; i >= 0; i--)
+        try
         {
-            Buff buff = runtime.Buffs[i];
-
-            if (buff == null)
+            // 清理期间禁止重新施加；单个移除可能触发其他移除回调。
+            while (runtime.Buffs.Count > 0)
             {
-                continue;
+                RemoveBuff(runtime, runtime.Buffs[runtime.Buffs.Count - 1]);
             }
-
-            ExecuteRemove(buff);
-            runtime.RemoveBuff(buff);
+            activeRuntimes.Remove(runtime);
         }
-
-        Log.Buff($"[BuffManager] 角色 {runtime.CharacterId} 的 Buff 已全部清理");
+        finally
+        {
+            clearingRuntimes.Remove(runtime);
+        }
     }
-
     private void UpdateDuration(CharacterRuntime runtime, Buff buff, float deltaTime)
     {
         buff.UpdateDuration(deltaTime);
@@ -178,8 +292,7 @@ public class BuffManager : MonoBehaviour
             return;
         }
 
-        ExecuteRemove(buff);
-        runtime.RemoveBuff(buff);
+        RemoveBuff(runtime, buff);
 
         Log.Buff($"[BuffManager] Buff 到期移除：{buff.DisplayName}");
     }
@@ -190,7 +303,7 @@ public class BuffManager : MonoBehaviour
 
         for (int i = 0; i < tickCount; i++)
         {
-            if (runtime.IsDead)
+            if (runtime.IsDead || runtime.IsDisposed || !ContainsBuff(runtime, buff))
             {
                 break;
             }
@@ -220,7 +333,7 @@ public class BuffManager : MonoBehaviour
 
         try
         {
-            newBuff = new Buff(config, source, target);
+            newBuff = pool.Rent(config, source, target, runtime);
         }
         catch (Exception exception)
         {
@@ -230,6 +343,7 @@ public class BuffManager : MonoBehaviour
         }
         if (!runtime.AddBuff(newBuff))
         {
+            pendingReturns.Add(newBuff);
             return;
         }
 
@@ -240,7 +354,7 @@ public class BuffManager : MonoBehaviour
         }
         catch (Exception exception)
         {
-            runtime.RemoveBuff(newBuff);
+            RemoveBuff(runtime, newBuff);
 
             Log.Buff($"[Error] Buff {newBuff.DisplayName} 初始效果执行异常，已取消添加");
             Debug.LogException(exception);

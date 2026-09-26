@@ -7,7 +7,7 @@ public class DefaultBuffExecutor : IBuffExecutor
             case BuffType.Attack:
                 {
                     int attackValue = CalculateTotalValue(buff);
-                    buff.Owner.AddAttack(attackValue);
+                    buff.TargetRuntime.AddAttack(attackValue);
 
                     Log.Buff($"[DefaultBuffExecutor] {buff.DisplayName} 生效：攻击力变化 {attackValue}，当前层数 {buff.CurrentStack}");
                     break;
@@ -30,7 +30,7 @@ public class DefaultBuffExecutor : IBuffExecutor
         {
             case BuffType.Poison:
                 {
-                    buff.Owner.TakeDamage(tickValue);
+                    buff.TargetRuntime.TakeDamage(tickValue);
 
                     Log.Buff($"[DefaultBuffExecutor] {buff.DisplayName} Tick：造成 {tickValue} 点伤害，当前层数 {buff.CurrentStack}");
                     break;
@@ -38,7 +38,7 @@ public class DefaultBuffExecutor : IBuffExecutor
 
             case BuffType.Heal:
                 {
-                    buff.Owner.Heal(tickValue);
+                    buff.TargetRuntime.Heal(tickValue);
 
                     Log.Buff($"[DefaultBuffExecutor] {buff.DisplayName} Tick：恢复 {tickValue} 点生命，当前层数 {buff.CurrentStack}");
                     break;
@@ -63,7 +63,7 @@ public class DefaultBuffExecutor : IBuffExecutor
                     int currentValue = CalculateTotalValue(buff);
                     int addedValue = currentValue - previousValue;
 
-                    buff.Owner.AddAttack(addedValue);
+                    buff.TargetRuntime.AddAttack(addedValue);
 
                     Log.Buff($"[DefaultBuffExecutor] {buff.DisplayName} 叠层：攻击力额外变化 {addedValue}，当前层数 {buff.CurrentStack}");
                     break;
@@ -85,7 +85,7 @@ public class DefaultBuffExecutor : IBuffExecutor
             case BuffType.Attack:
                 {
                     int attackValue = CalculateTotalValue(buff);
-                    buff.Owner.AddAttack(-attackValue);
+                    buff.TargetRuntime.AddAttack(-attackValue);
 
                     Log.Buff($"[DefaultBuffExecutor] {buff.DisplayName} 移除：撤销攻击力变化 {attackValue}");
                     break;
