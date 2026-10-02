@@ -12,6 +12,7 @@ public class SkillEditorWindow : EditorWindow
 {
     private HashSet<SkillSO> selectedSkills = new();
     private Dictionary<SkillSO, bool> foldouts = new();
+    private readonly HashSet<SkillSO> expandedLuaDetails = new();
     private List<SkillSO> skills = new();
     private string newSkillName = "";
     private string searchFilter = "";
@@ -346,8 +347,6 @@ public class SkillEditorWindow : EditorWindow
         SerializedProperty nameProp = so.FindProperty("skillName");
         SerializedProperty cooldownProp = so.FindProperty("cooldown");
         SerializedProperty tagProp = so.FindProperty("tag");
-        SerializedProperty buffProp = so.FindProperty("associatedBuff");
-        SerializedProperty targetProp = so.FindProperty("buffTarget");
         SerializedProperty luaProp = so.FindProperty("luaScript");
 
         EditorGUILayout.BeginHorizontal();
@@ -400,31 +399,6 @@ public class SkillEditorWindow : EditorWindow
                 }
             }
 
-            EditorGUILayout.LabelField("Lua路径", so.FindProperty("filePath").stringValue);
-            EditorGUILayout.LabelField("Lua有效引用数", SkillRepository.GetLuaReferenceCount(SkillRepository.GetLuaGuid(skill)).ToString());
-            if (GUILayout.Button("定位"))
-            {
-                if (luaProp.objectReferenceValue != null)
-                {
-                    EditorGUIUtility.PingObject(luaProp.objectReferenceValue);
-                }
-                else if (File.Exists(skill.filePath))
-                {
-                    EditorUtility.RevealInFinder(skill.filePath);
-                }
-            }
-            //buffSO引用
-            if (buffProp != null)
-            {
-                EditorGUILayout.PropertyField(buffProp);
-
-                // 只有选了 Buff 才显示目标选择
-                if (buffProp.objectReferenceValue != null && targetProp != null)
-                {
-                    EditorGUILayout.PropertyField(targetProp);
-                }
-            }
-
             if (EditorGUI.EndChangeCheck())
             {
                 so.ApplyModifiedProperties();
@@ -432,7 +406,34 @@ public class SkillEditorWindow : EditorWindow
                 EditorUtility.SetDirty(skill);
             }
 
-          
+            bool showLuaDetails = EditorGUILayout.Foldout(expandedLuaDetails.Contains(skill), "Lua 详情与工具", true);
+            if (showLuaDetails)
+            {
+                expandedLuaDetails.Add(skill);
+                EditorGUI.indentLevel++;
+                EditorGUILayout.LabelField("Lua路径", so.FindProperty("filePath").stringValue);
+                EditorGUILayout.LabelField("Lua有效引用数", SkillRepository.GetLuaReferenceCount(SkillRepository.GetLuaGuid(skill)).ToString());
+                if (GUILayout.Button("定位"))
+                {
+                    if (luaProp.objectReferenceValue != null)
+                    {
+                        EditorGUIUtility.PingObject(luaProp.objectReferenceValue);
+                    }
+                    else if (File.Exists(skill.filePath))
+                    {
+                        EditorUtility.RevealInFinder(skill.filePath);
+                    }
+                }
+                if (GUILayout.Button("打开技能 Graph"))
+                {
+                    SkillGraphEditor.SkillGraphWindow.Open(skill);
+                }
+                    EditorGUI.indentLevel--;
+            }
+            else
+            {
+                expandedLuaDetails.Remove(skill);
+            }
         }
 
         EditorGUILayout.EndVertical();

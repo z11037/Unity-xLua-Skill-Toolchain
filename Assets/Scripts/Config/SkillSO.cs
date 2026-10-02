@@ -11,6 +11,8 @@ public enum SkillTag
 [CreateAssetMenu()]
 public class SkillSO : ScriptableObject
 {
+    [HideInInspector] public UnityEngine.Object[] luaResources = new UnityEngine.Object[0];
+    public System.Collections.Generic.List<SkillActionConfig> actions = new System.Collections.Generic.List<SkillActionConfig>();
     public int skillID;
     public string skillName;
     // 编辑器直接绑定 Lua 资源；保留路径以兼容现有运行时加载及旧配置。
@@ -18,8 +20,6 @@ public class SkillSO : ScriptableObject
     public string filePath;
     public float cooldown;
     public SkillTag tag = SkillTag.Attack;  // 改为枚举，默认 Attack
-    public BuffSO associatedBuff;       // 关联的 Buff
-    public BuffTargetType buffTarget;   // Buff 目标
 #if UNITY_EDITOR
     private void OnValidate()
     {

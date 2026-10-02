@@ -11,7 +11,7 @@ public static class SkillValidator
         {
             if (string.IsNullOrWhiteSpace(skill.skillName))
                 errors.Add($"警告：技能 ID {skill.skillID} 名称不能为空。");
-            if (skill.cooldown < 0)
+            if (skill.cooldown < 0 || float.IsNaN(skill.cooldown) || float.IsInfinity(skill.cooldown))
                 errors.Add($"警告：技能 {skill.skillName} 冷却时间不能为负数。");
         }
 

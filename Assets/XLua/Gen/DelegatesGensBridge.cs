@@ -1,4 +1,4 @@
-﻿#if USE_UNI_LUA
+#if USE_UNI_LUA
 using LuaAPI = UniLua.Lua;
 using RealStatePtr = UniLua.ILuaState;
 using LuaCSFunction = UniLua.CSharpFunctionDelegate;
@@ -16,7 +16,7 @@ namespace XLua
     public partial class DelegateBridge : DelegateBridgeBase
     {
 		
-		public void __Gen_Delegate_Imp0(Character p0, Character p1)
+		public void __Gen_Delegate_Imp0(Character p0, Character p1, UnityEngine.Object[] p2)
 		{
 #if THREAD_SAFE || HOTFIX_ENABLE
             lock (luaEnv.luaEnvLock)
@@ -27,8 +27,9 @@ namespace XLua
                 ObjectTranslator translator = luaEnv.translator;
                 translator.Push(L, p0);
                 translator.Push(L, p1);
+                translator.Push(L, p2);
                 
-                PCall(L, 2, 0, errFunc);
+                PCall(L, 3, 0, errFunc);
                 
                 
                 

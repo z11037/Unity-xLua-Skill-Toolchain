@@ -3,7 +3,7 @@ using UnityEngine;
 using XLua;
 
 [CSharpCallLua]
-public delegate void SkillExecute(Character attacker, Character target);
+public delegate void SkillExecute(Character attacker, Character target, UnityEngine.Object[] resources);
 
 public sealed class Skill : IDisposable
 {
@@ -13,22 +13,26 @@ public sealed class Skill : IDisposable
     public string SkillName => Config.skillName;
 
     public float CurrentCooldown { get; private set; }
-    public bool CanExecute => CurrentCooldown <= 0f;
+    public bool CanExecute => !disposed && !isExecuting && CurrentCooldown <= 0f;
 
+    private bool disposed;
+    private bool isExecuting;
     private LuaTable luaTable;
     private SkillExecute execute;
     public bool IsReady
     {
         get
         {
-            return execute != null;
+            return !disposed && execute != null;
         }
     }
 
     public Skill(SkillSO config)
     {
         if (config == null)
+        {
             throw new ArgumentNullException(nameof(config));
+        }
 
         Config = config;
         CurrentCooldown = 0f;
@@ -82,7 +86,7 @@ public sealed class Skill : IDisposable
         }
     }
 
-    public bool TryExecute( Character caster,Character target)
+    public bool TryExecute(Character caster, Character target)
     {
         if (!CanExecute)
         {
@@ -98,18 +102,19 @@ public sealed class Skill : IDisposable
             return false;
         }
 
-        if (caster == null)
+        if (caster == null || float.IsNaN(Config.cooldown) || float.IsInfinity(Config.cooldown) || Config.cooldown < 0f)
         {
-            Log.Skill($"[Error] 技能 {SkillId} 的施法者为空");
+            Log.Skill($"[Error] 技能 {SkillId} 的施法者为空或冷却配置无效");
 
             return false;
         }
 
+        isExecuting = true;
         try
         {
             Log.Skill( $"技能 {SkillId} 开始执行");
 
-            execute(caster, target);
+            execute(caster, target, Config.luaResources);
         }
         catch (Exception exception)
         {
@@ -118,53 +123,18 @@ public sealed class Skill : IDisposable
             return false;
         }
 
-        CurrentCooldown =Mathf.Max(0f, Config.cooldown);
+        finally
+        {
+            isExecuting = false;
+        }
 
-        TryApplyAssociatedBuff(caster, target);
+
+
+        CurrentCooldown = Mathf.Max(0f, Config.cooldown);
 
         Log.Skill( $"技能 {SkillId} 执行完成，冷却时间：{CurrentCooldown:F1} 秒");
 
         return true;
-    }
-
-    private void TryApplyAssociatedBuff( Character caster,  Character target)
-    {
-        if (Config.associatedBuff == null)
-            return;
-
-        Character receiver =
-            Config.buffTarget == BuffTargetType.Self
-                ? caster
-                : target;
-
-        if (receiver == null)
-        {
-            Log.Skill(
-                $"[Warning] 技能 {SkillId} 的 Buff 目标为空");
-
-            return;
-        }
-
-        if (BuffManager.Instance == null)
-        {
-            Log.Skill(
-                $"[Error] BuffManager.Instance 为空，技能 {SkillId} 无法施加 Buff");
-
-            return;
-        }
-
-        try
-        {
-            BuffManager.Instance.AddBuff( receiver, Config.associatedBuff, caster);
-
-            Log.Skill($"技能 {SkillId} 已请求施加 Buff：{Config.associatedBuff.name}");
-        }
-        catch (Exception exception)
-        {
-            Log.Skill($"[Error] 技能 {SkillId} 施加关联 Buff 失败");
-
-            Debug.LogException(exception);
-        }
     }
 
     public void Tick(float deltaTime)
@@ -191,6 +161,7 @@ public sealed class Skill : IDisposable
 
     public void Dispose()
     {
+        disposed = true;
         execute = null;
 
         if (luaTable != null)
