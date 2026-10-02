@@ -1,0 +1,6 @@
+<linker>
+  <!-- Lua 通过反射调用适配入口；代码裁剪时保留公开方法。 -->
+  <assembly fullname="Assembly-CSharp">
+    <type fullname="SkillActionApi" preserve="all" />
+  </assembly>
+</linker>
