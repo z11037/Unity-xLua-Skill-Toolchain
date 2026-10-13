@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace SkillGraphEditor
 {
-    public enum NodeKind { Entry, Damage, ApplyBuff }
+    public enum NodeKind { Entry, Damage, ApplyBuff, If, HealthBelow }
     public enum TargetKind { CurrentTarget, Self }
 
     [Serializable]
@@ -16,6 +16,7 @@ namespace SkillGraphEditor
         public TargetKind target;
         public int damage = 10;
         public string buffGuid = "";
+        public float healthPercent = 30f;
     }
 
     [Serializable]
@@ -30,7 +31,7 @@ namespace SkillGraphEditor
     [Serializable]
     public sealed class GraphData
     {
-        public const int CurrentVersion = 2;
+        public const int CurrentVersion = 3;
         public int version = CurrentVersion;
         public string luaGuid;
         public List<GraphNode> nodes = new List<GraphNode>();

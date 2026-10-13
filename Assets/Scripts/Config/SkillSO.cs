@@ -15,6 +15,7 @@ public class SkillSO : ScriptableObject
     public System.Collections.Generic.List<SkillActionConfig> actions = new System.Collections.Generic.List<SkillActionConfig>();
     public int skillID;
     public string skillName;
+    [TextArea(8, 20)] public string description = "";
     // 编辑器直接绑定 Lua 资源；保留路径以兼容现有运行时加载及旧配置。
     public TextAsset luaScript;
     public string filePath;

@@ -166,6 +166,25 @@ namespace SkillGraphEditor
             return entry == null ? new HashSet<string>() : ReachableFrom(graph, entry.id);
         }
 
+        // 条件不属于执行链，但接入有效 If 的条件仍需要参与参数检查和生成。
+        public static HashSet<string> ParticipatingNodes(GraphData graph)
+        {
+            HashSet<string> reached = ReachableFlow(graph);
+            foreach (GraphEdge edge in graph.edges)
+            {
+                if (edge != null && edge.toPort == GraphPorts.ConditionInput && reached.Contains(edge.to))
+                {
+                    reached.Add(edge.from);
+                }
+            }
+            return reached;
+        }
+
+        public static GraphEdge Outgoing(GraphData graph, string nodeId, string portId)
+        {
+            return graph.edges.Find(edge => edge.from == nodeId && edge.fromPort == portId);
+        }
+
         private static List<GraphIssue> ValidateEndpoints(GraphData graph, string from, string fromPort, string to, string toPort)
         {
             var issues = new List<GraphIssue>();

@@ -38,7 +38,7 @@ namespace SkillGraphEditor
         public static GraphData Parse(string json)
         {
             GraphVersionHeader header = JsonUtility.FromJson<GraphVersionHeader>(json);
-            if (header == null || (header.version != 1 && header.version != 2))
+            if (header == null || (header.version != 1 && header.version != 2 && header.version != GraphData.CurrentVersion))
             {
                 throw new InvalidOperationException("Graph JSON 缺少有效版本，或版本尚不支持。");
             }
@@ -53,6 +53,11 @@ namespace SkillGraphEditor
             }
             else
             {
+                if (header.version == 2)
+                {
+                    ValidateLegacyNodeKinds(graph);
+                    graph.version = GraphData.CurrentVersion;
+                }
                 graph.ValidateStructure();
             }
             return graph;
@@ -60,13 +65,14 @@ namespace SkillGraphEditor
 
         private static void MigrateLegacyGraph(GraphData graph)
         {
+            ValidateLegacyNodeKinds(graph);
             if (graph.edges == null)
             {
                 throw new InvalidOperationException("旧版 Graph 的连接列表无效。");
             }
 
             // 先用临时图检查旧节点和连接，全部有效后再修改实际图；读取不写回磁盘。
-            var checkedGraph = new GraphData { version = 2, luaGuid = graph.luaGuid, nodes = graph.nodes };
+            var checkedGraph = new GraphData { version = GraphData.CurrentVersion, luaGuid = graph.luaGuid, nodes = graph.nodes };
             foreach (GraphEdge edge in graph.edges)
             {
                 if (edge == null)
@@ -81,7 +87,22 @@ namespace SkillGraphEditor
                 edge.fromPort = GraphPorts.FlowOutput;
                 edge.toPort = GraphPorts.FlowInput;
             }
-            graph.version = 2;
+            graph.version = GraphData.CurrentVersion;
+        }
+
+        private static void ValidateLegacyNodeKinds(GraphData graph)
+        {
+            if (graph.nodes == null)
+            {
+                throw new InvalidOperationException("旧版 Graph 的节点列表无效。");
+            }
+            foreach (GraphNode node in graph.nodes)
+            {
+                if (node == null || (node.kind != NodeKind.Entry && node.kind != NodeKind.Damage && node.kind != NodeKind.ApplyBuff))
+                {
+                    throw new InvalidOperationException("旧版 Graph 包含不支持的节点类型。");
+                }
+            }
         }
 
         public void Edit(Action<GraphData> edit)

@@ -27,6 +27,7 @@ namespace SkillGraphEditor
         private List<GraphIssue> validationIssues = new List<GraphIssue>();
         private Vector2 inspectorScroll;
         private bool exportQueued;
+        private bool descriptionQueued;
         private const float NodeWidth = 180;
         private const float NodeHeight = 100;
 
@@ -260,11 +261,18 @@ namespace SkillGraphEditor
                 {
                     EditorGUILayout.HelpBox($"此 Lua 被 {references} 个技能共享，图和导出脚本也共享。", MessageType.Warning);
                 }
-                using (new EditorGUI.DisabledScope(exportQueued || contextSkill == null || SkillRepository.GetLuaGuid(contextSkill) != session.Data.luaGuid))
+                using (new EditorGUI.DisabledScope(exportQueued || descriptionQueued || contextSkill == null || SkillRepository.GetLuaGuid(contextSkill) != session.Data.luaGuid))
                 {
-                    if (GUILayout.Button("导出当前 Graph 为 Lua 模板"))
+                    using (new EditorGUILayout.HorizontalScope())
                     {
-                        QueueExportGraph();
+                        if (GUILayout.Button("导出当前 Graph 为 Lua 模板"))
+                        {
+                            QueueExportGraph();
+                        }
+                        if (GUILayout.Button("生成技能描述"))
+                        {
+                            QueueGenerateDescription();
+                        }
                     }
                 }
             }
@@ -293,6 +301,7 @@ namespace SkillGraphEditor
                     inspectorScroll = GUILayout.BeginScrollView(inspectorScroll, GUILayout.ExpandHeight(true));
                     DrawInspector();
                     DrawValidation();
+                    DrawDescriptionPreview();
                     GUILayout.EndScrollView();
                 }
             }
@@ -338,7 +347,7 @@ namespace SkillGraphEditor
                 height = Mathf.Max(height, node.position.y + 300);
             }
             scroll = GUI.BeginScrollView(viewport, scroll, new Rect(0, 0, width, height));
-            GraphNode pointedNode = pointerInCanvas ? session.Data.nodes.FindLast(node => new Rect(node.position, new Vector2(NodeWidth, NodeHeight)).Contains(Event.current.mousePosition)) : null;
+            GraphNode pointedNode = pointerInCanvas ? session.Data.nodes.FindLast(node => new Rect(node.position, new Vector2(NodeWidth, HeightFor(node.kind))).Contains(Event.current.mousePosition)) : null;
             if (pointerInCanvas && Event.current.type == EventType.MouseDown && Event.current.button == 0)
             {
                 selectedId = null;
@@ -360,13 +369,15 @@ namespace SkillGraphEditor
                 GraphNode to = session.Data.Find(edge.to);
                 Vector3 start = PortPosition(from, edge.fromPort);
                 Vector3 end = PortPosition(to, edge.toPort);
-                Vector3 first = start + Vector3.right * 60;
-                Vector3 second = end + Vector3.left * 60;
+                Vector3 first = start + PortOutward(from, edge.fromPort) * 60;
+                Vector3 arrival = -PortOutward(to, edge.toPort);
+                Vector3 second = end - arrival * 60;
                 bool selected = selectedEdge != null && SameEdge(edge, selectedEdge);
-                Color color = selected ? Color.yellow : Color.cyan;
+                Color color = selected ? Color.yellow : GraphPorts.Find(from.kind, edge.fromPort).Type == PortType.Condition ? new Color(0.85f, 0.6f, 1f) : Color.cyan;
                 Handles.DrawBezier(start, end, first, second, color, null, selected ? 4 : 3);
                 Handles.color = color;
-                Handles.DrawAAConvexPolygon(end, end + new Vector3(-10, -5), end + new Vector3(-10, 5));
+                Vector3 perpendicular = new Vector3(-arrival.y, arrival.x, 0);
+                Handles.DrawAAConvexPolygon(end, end - arrival * 10 - perpendicular * 5, end - arrival * 10 + perpendicular * 5);
                 bool pointerOnEdge = pointerInCanvas && pointedNode == null && HandleUtility.DistancePointBezier(Event.current.mousePosition, start, end, first, second) < 10;
                 if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && pointerOnEdge)
                 {
@@ -404,7 +415,7 @@ namespace SkillGraphEditor
                 {
                     GUI.backgroundColor = new Color(0.6f, 0.9f, 1f);
                 }
-                Rect rect = GUI.Window(i, new Rect(node.position, new Vector2(NodeWidth, NodeHeight)), DrawNode, NodeTitle(node));
+                Rect rect = GUI.Window(i, new Rect(node.position, new Vector2(NodeWidth, HeightFor(node.kind))), DrawNode, NodeTitle(node));
                 GUI.backgroundColor = previousBackground;
                 node.position = new Vector2(Mathf.Max(0, rect.x), Mathf.Max(0, rect.y));
             }
@@ -415,7 +426,7 @@ namespace SkillGraphEditor
         private void DrawNode(int index)
         {
             GraphNode node = session.Data.nodes[index];
-            bool pointerInNode = new Rect(0, 0, NodeWidth, NodeHeight).Contains(Event.current.mousePosition);
+            bool pointerInNode = new Rect(0, 0, NodeWidth, HeightFor(node.kind)).Contains(Event.current.mousePosition);
             if (canvasHasFocus && Event.current.type == EventType.MouseDown && pointerInNode)
             {
                 SelectNode(node.id);
@@ -445,14 +456,45 @@ namespace SkillGraphEditor
                 Event.current.Use();
                 Repaint();
             }
-            GUI.Label(new Rect(10, 23, 165, 20), node.kind == NodeKind.Damage ? "固定伤害：" + node.damage : node.kind == NodeKind.ApplyBuff ? "引用 BuffSO" : "技能编排入口");
-            int inputs = 0;
-            int outputs = 0;
+            string summary = node.kind == NodeKind.Damage ? "固定伤害：" + node.damage : node.kind == NodeKind.ApplyBuff ? "引用 BuffSO"
+                : node.kind == NodeKind.HealthBelow ? "生命低于 " + node.healthPercent + "%" : node.kind == NodeKind.If ? "分支结束后执行后续" : "技能编排入口";
+            string summaryTooltip = summary;
+            if (node.kind == NodeKind.ApplyBuff)
+            {
+                string buffPath = AssetDatabase.GUIDToAssetPath(node.buffGuid ?? "");
+                BuffSO buff = string.IsNullOrEmpty(buffPath) ? null : AssetDatabase.LoadAssetAtPath<BuffSO>(buffPath);
+                if (buff != null)
+                {
+                    string buffName = string.IsNullOrWhiteSpace(buff.buffName) ? buff.name : buff.buffName;
+                    summary = "Buff：" + buffName;
+                    summaryTooltip = $"{summary}\nID：{buff.buffID}\n资源：{buffPath}";
+                }
+                else
+                {
+                    summary = string.IsNullOrWhiteSpace(node.buffGuid) ? "Buff：未引用" : "Buff：引用失效";
+                    summaryTooltip = summary;
+                }
+            }
+            GUI.Label(new Rect(10, node.kind == NodeKind.If ? 48 : 23, 165, 20), new GUIContent(summary, summaryTooltip));
+            if (node.kind == NodeKind.If)
+            {
+                GUI.Label(new Rect(110, 25, 60, 20), "条件");
+                GUI.Label(new Rect(25, 117, 50, 20), "满足");
+                GUI.Label(new Rect(117, 117, 60, 20), "不满足");
+                GUI.Label(new Rect(124, 96, 50, 20), "后续");
+            }
             foreach (GraphPortDefinition port in GraphPorts.For(node.kind))
             {
-                int indexInDirection = port.Direction == PortDirection.Input ? inputs++ : outputs++;
-                string tooltip = port.Direction == PortDirection.Input ? "执行流程输入" : "执行流程输出";
-                if (!GUI.Button(PortRect(port, indexInDirection), new GUIContent("▶", tooltip)))
+                string tooltip = PortLabel(node.kind, port.Id);
+                string arrow = port.Side == PortSide.Top || port.Side == PortSide.Bottom ? "▼" : "▶";
+                Color previousColor = GUI.backgroundColor;
+                if (port.Type == PortType.Condition)
+                {
+                    GUI.backgroundColor = new Color(0.85f, 0.6f, 1f);
+                }
+                bool clicked = GUI.Button(PortRect(node, port), new GUIContent(arrow, tooltip));
+                GUI.backgroundColor = previousColor;
+                if (!clicked)
                 {
                     continue;
                 }
@@ -481,24 +523,71 @@ namespace SkillGraphEditor
             GUI.DragWindow(new Rect(0, 0, NodeWidth, 22));
         }
 
-        private static Rect PortRect(GraphPortDefinition port, int index)
+        private static float HeightFor(NodeKind kind)
         {
-            return new Rect(port.Direction == PortDirection.Input ? 5 : 125, 55 + index * 26, 50, 25);
+            return kind == NodeKind.If ? 170 : NodeHeight;
+        }
+
+        private static Rect PortRect(GraphNode node, GraphPortDefinition port)
+        {
+            switch (port.Side)
+            {
+                case PortSide.Top:
+                    return new Rect(75, 24, 30, 24);
+                case PortSide.Bottom:
+                    return new Rect(port.Id == GraphPorts.FlowTrue ? 30 : 120, HeightFor(node.kind) - 30, 30, 25);
+                default:
+                    return new Rect(port.Side == PortSide.Left ? 5 : NodeWidth - 35, node.kind == NodeKind.If ? 72 : 55, 30, 25);
+            }
         }
 
         private static Vector3 PortPosition(GraphNode node, string portId)
         {
-            int inputs = 0;
-            int outputs = 0;
-            foreach (GraphPortDefinition port in GraphPorts.For(node.kind))
+            GraphPortDefinition port = GraphPorts.Find(node.kind, portId);
+            Rect rect = PortRect(node, port);
+            switch (port.Side)
             {
-                int index = port.Direction == PortDirection.Input ? inputs++ : outputs++;
-                if (port.Id == portId)
-                {
-                    return node.position + new Vector2(port.Direction == PortDirection.Input ? 10 : NodeWidth - 10, PortRect(port, index).center.y);
-                }
+                case PortSide.Top:
+                    return node.position + new Vector2(rect.center.x, rect.y + 5);
+                case PortSide.Bottom:
+                    return node.position + new Vector2(rect.center.x, rect.yMax - 5);
+                default:
+                    return node.position + new Vector2(port.Side == PortSide.Left ? rect.x + 5 : rect.xMax - 5, rect.center.y);
             }
-            return node.position;
+        }
+
+        private static Vector3 PortOutward(GraphNode node, string portId)
+        {
+            switch (GraphPorts.Find(node.kind, portId).Side)
+            {
+                case PortSide.Left:
+                    return Vector3.left;
+                case PortSide.Top:
+                    return new Vector3(0, -1, 0);
+                case PortSide.Bottom:
+                    return new Vector3(0, 1, 0);
+                default:
+                    return Vector3.right;
+            }
+        }
+
+        private static string PortLabel(NodeKind kind, string portId)
+        {
+            switch (portId)
+            {
+                case GraphPorts.ConditionInput:
+                    return "条件输入";
+                case GraphPorts.ConditionOutput:
+                    return "条件输出";
+                case GraphPorts.FlowTrue:
+                    return "满足分支输出";
+                case GraphPorts.FlowFalse:
+                    return "不满足分支输出";
+                case GraphPorts.FlowInput:
+                    return "执行流程输入";
+                default:
+                    return kind == NodeKind.If ? "后续流程输出" : "执行流程输出";
+            }
         }
 
         private void ClearConnection()
@@ -598,9 +687,13 @@ namespace SkillGraphEditor
                 {
                     location += " · Buff 引用";
                 }
+                else if (issue.Field == "healthPercent")
+                {
+                    location += " · 生命比例";
+                }
                 else if (!string.IsNullOrEmpty(issue.PortId))
                 {
-                    location += issue.PortId == GraphPorts.FlowInput ? " · 输入端口" : " · 输出端口";
+                    location += " · " + PortLabel(node == null ? NodeKind.Entry : node.kind, issue.PortId);
                 }
                 using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
                 {
@@ -624,7 +717,8 @@ namespace SkillGraphEditor
             GraphEdge edge = FindSelectedEdge();
             if (edge != null)
             {
-                GUILayout.Label("Flow 连线", EditorStyles.boldLabel);
+                GraphNode source = session.Data.Find(edge.from);
+                GUILayout.Label(GraphPorts.Find(source.kind, edge.fromPort).Type == PortType.Condition ? "Condition 条件连线" : "Flow 流程连线", EditorStyles.boldLabel);
                 GUILayout.Label(NodeTitle(session.Data.Find(edge.from)) + " → " + NodeTitle(session.Data.Find(edge.to)), EditorStyles.wordWrappedLabel);
                 if (GUILayout.Button("断开连接"))
                 {
@@ -639,7 +733,15 @@ namespace SkillGraphEditor
                 return;
             }
             GUILayout.Label(NodeTitle(node), EditorStyles.boldLabel);
-            if (node.kind != NodeKind.Entry)
+            if (node.kind == NodeKind.If)
+            {
+                EditorGUILayout.HelpBox("条件求值一次，只执行满足或不满足中的一个分支；分支结束后执行右侧后续。当前分支内支持顺序动作。", MessageType.Info);
+                if (!IsConnectedToEntry(node.id))
+                {
+                    EditorGUILayout.HelpBox("该节点未接入入口流程，不参与导出和参数检查。", MessageType.Info);
+                }
+            }
+            else if (node.kind != NodeKind.Entry)
             {
                 bool participates = IsConnectedToEntry(node.id);
                 TargetKind target = (TargetKind)EditorGUILayout.EnumPopup("目标", node.target);
@@ -658,6 +760,19 @@ namespace SkillGraphEditor
                     {
                         EditorGUILayout.HelpBox("伤害值尚未有效填写，可保存为草稿。", MessageType.Warning);
                     }
+                }
+                else if (node.kind == NodeKind.HealthBelow)
+                {
+                    float percent = EditorGUILayout.DelayedFloatField("低于最大生命（%）", node.healthPercent);
+                    if (percent != node.healthPercent)
+                    {
+                        Change(graph => graph.Find(node.id).healthPercent = percent);
+                    }
+                    if (participates && (float.IsNaN(node.healthPercent) || float.IsInfinity(node.healthPercent) || node.healthPercent < 0f || node.healthPercent > 100f))
+                    {
+                        EditorGUILayout.HelpBox("生命比例需要填写 0 到 100 之间的有限数值，可保存不完整草稿。", MessageType.Warning);
+                    }
+                    EditorGUILayout.HelpBox("严格小于；等于阈值、目标为空或最大生命不大于零时，条件不满足。", MessageType.Info);
                 }
                 else
                 {
@@ -692,6 +807,8 @@ namespace SkillGraphEditor
             {
                 DrawCard(NodeKind.Damage, "伤害\n▶ 固定数值");
                 DrawCard(NodeKind.ApplyBuff, "施加 Buff\n▶ 引用配置");
+                DrawCard(NodeKind.HealthBelow, "生命比例条件\n▶ 低于指定百分比");
+                DrawCard(NodeKind.If, "If 条件分支\n▼ 分支　▶ 后续");
                 GUILayout.FlexibleSpace();
             }
         }
@@ -708,6 +825,90 @@ namespace SkillGraphEditor
                 DragAndDrop.StartDrag(Label(kind));
                 Event.current.Use();
             }
+        }
+
+        private void DrawDescriptionPreview()
+        {
+            if (contextSkill == null || string.IsNullOrEmpty(contextSkill.description))
+            {
+                return;
+            }
+            GUILayout.Space(10);
+            EditorGUILayout.LabelField("当前技能描述", EditorStyles.boldLabel);
+            float height = Mathf.Max(80f, EditorStyles.wordWrappedLabel.CalcHeight(new GUIContent(contextSkill.description), 210f));
+            EditorGUILayout.SelectableLabel(contextSkill.description, EditorStyles.wordWrappedLabel, GUILayout.Height(height));
+        }
+
+        private void QueueGenerateDescription()
+        {
+            if (descriptionQueued)
+            {
+                return;
+            }
+            descriptionQueued = true;
+            GraphSession requestedSession = session;
+            SkillSO requestedSkill = contextSkill;
+            // 覆盖确认和资产保存离开 OnGUI 执行，避免打断当前绘制。
+            EditorApplication.delayCall += () =>
+            {
+                if (this == null)
+                {
+                    return;
+                }
+                try
+                {
+                    if (session != requestedSession || contextSkill != requestedSkill || requestedSkill == null || SkillRepository.GetLuaGuid(requestedSkill) != requestedSession.Data.luaGuid)
+                    {
+                        message = "编辑对象已改变，本次描述生成已取消。";
+                        return;
+                    }
+                    FinishDrag();
+                    string sourceLuaGuid = session.Data.luaGuid;
+                    string description = GraphTemplateExport.GenerateDescription(session.Data);
+                    if (!string.IsNullOrEmpty(requestedSkill.description) && requestedSkill.description != description && !EditorUtility.DisplayDialog("生成技能描述", "重新生成将覆盖当前技能已有的描述，包括手写说明；生成后可继续自由编辑。是否继续？", "生成", "取消"))
+                    {
+                        return;
+                    }
+                    if (session != requestedSession || contextSkill != requestedSkill || requestedSkill == null || SkillRepository.GetLuaGuid(requestedSkill) != sourceLuaGuid)
+                    {
+                        message = "编辑对象已改变，本次描述生成已取消。";
+                        return;
+                    }
+                    // 描述依据已保存的图；保存冲突时不写入一份无法复现的描述。
+                    if (!SaveGraph())
+                    {
+                        message = "描述未更新：" + message;
+                        return;
+                    }
+                    // 图和 Lua 可以共享；描述只写入从技能编辑器进入的当前技能。
+                    Undo.RecordObject(requestedSkill, "生成技能描述");
+                    requestedSkill.description = description;
+                    EditorUtility.SetDirty(requestedSkill);
+                    AssetDatabase.SaveAssetIfDirty(requestedSkill);
+                    message = "已保存 Graph 并生成当前技能描述，可继续手动编辑。修改配置后请按需重新生成描述；Lua 需单独导出。";
+                }
+                catch (ExitGUIException)
+                {
+                    throw;
+                }
+                catch (GraphValidationException exception)
+                {
+                    validationIssues = new List<GraphIssue>(exception.Issues);
+                    message = "描述生成已阻止，请点击检查列表定位问题。";
+                }
+                catch (Exception exception)
+                {
+                    message = "描述生成失败：" + exception.Message;
+                }
+                finally
+                {
+                    descriptionQueued = false;
+                    if (this != null)
+                    {
+                        Repaint();
+                    }
+                }
+            };
         }
 
         private void QueueExportGraph()
@@ -834,12 +1035,26 @@ namespace SkillGraphEditor
 
         private bool IsConnectedToEntry(string id)
         {
-            return GraphValidator.ReachableFlow(session.Data).Contains(id);
+            return GraphValidator.ParticipatingNodes(session.Data).Contains(id);
         }
 
         private static string Label(NodeKind kind)
         {
-            return kind == NodeKind.Entry ? "入口" : kind == NodeKind.Damage ? "伤害" : "施加 Buff";
+            switch (kind)
+            {
+                case NodeKind.Entry:
+                    return "入口";
+                case NodeKind.Damage:
+                    return "伤害";
+                case NodeKind.ApplyBuff:
+                    return "施加 Buff";
+                case NodeKind.If:
+                    return "If 分支";
+                case NodeKind.HealthBelow:
+                    return "生命比例条件";
+                default:
+                    return "未知节点";
+            }
         }
 
         private string NodeTitle(GraphNode node)

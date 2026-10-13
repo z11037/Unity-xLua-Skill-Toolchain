@@ -13,6 +13,9 @@ public class SkillEditorWindow : EditorWindow
     private HashSet<SkillSO> selectedSkills = new();
     private Dictionary<SkillSO, bool> foldouts = new();
     private readonly HashSet<SkillSO> expandedLuaDetails = new();
+    [SerializeField] private float descriptionFieldHeight = 160f;
+    private GUIStyle descriptionStyle;
+    private bool descriptionUsesDarkSkin;
     private List<SkillSO> skills = new();
     private string newSkillName = "";
     private string searchFilter = "";
@@ -345,6 +348,7 @@ public class SkillEditorWindow : EditorWindow
         so.Update();
 
         SerializedProperty nameProp = so.FindProperty("skillName");
+        SerializedProperty descriptionProp = so.FindProperty("description");
         SerializedProperty cooldownProp = so.FindProperty("cooldown");
         SerializedProperty tagProp = so.FindProperty("tag");
         SerializedProperty luaProp = so.FindProperty("luaScript");
@@ -381,6 +385,7 @@ public class SkillEditorWindow : EditorWindow
             }
             EditorGUILayout.PropertyField(nameProp);
             EditorGUILayout.PropertyField(cooldownProp);
+            DrawDescriptionField(descriptionProp);
 
             // 使用资源引用选择 Lua，并保留路径展示以兼容运行时加载。
             EditorGUI.BeginChangeCheck();
@@ -438,6 +443,49 @@ public class SkillEditorWindow : EditorWindow
 
         EditorGUILayout.EndVertical();
         EditorGUILayout.EndHorizontal();
+    }
+
+    private void DrawDescriptionField(SerializedProperty descriptionProp)
+    {
+        if (descriptionProp == null)
+        {
+            return;
+        }
+        bool darkSkin = EditorGUIUtility.isProSkin;
+        if (descriptionStyle == null || descriptionUsesDarkSkin != darkSkin)
+        {
+            descriptionUsesDarkSkin = darkSkin;
+            descriptionStyle = new GUIStyle(EditorStyles.textArea)
+            {
+                wordWrap = true,
+                alignment = TextAnchor.UpperLeft,
+                fixedHeight = 0f,
+                padding = new RectOffset(6, 6, 4, 4)
+            };
+            Color textColor = darkSkin ? new Color(0.92f, 0.92f, 0.92f) : new Color(0.1f, 0.1f, 0.1f);
+            var states = new[] { descriptionStyle.normal, descriptionStyle.hover, descriptionStyle.active, descriptionStyle.focused, descriptionStyle.onNormal, descriptionStyle.onHover, descriptionStyle.onActive, descriptionStyle.onFocused };
+            foreach (GUIStyleState state in states)
+            {
+                state.background = null;
+                state.textColor = textColor;
+            }
+        }
+        EditorGUILayout.LabelField("技能描述");
+        Rect inputRect = GUILayoutUtility.GetRect(GUIContent.none, descriptionStyle, GUILayout.Height(descriptionFieldHeight), GUILayout.ExpandWidth(true));
+        // 背景和边框独立绘制，空文本或皮肤样式缺少背景时也能显示输入区域。
+        if (Event.current.type == EventType.Repaint)
+        {
+            Color borderColor = darkSkin ? new Color(0.5f, 0.5f, 0.5f) : new Color(0.4f, 0.4f, 0.4f);
+            Color backgroundColor = darkSkin ? new Color(0.12f, 0.12f, 0.12f) : Color.white;
+            EditorGUI.DrawRect(inputRect, borderColor);
+            EditorGUI.DrawRect(new Rect(inputRect.x + 1f, inputRect.y + 1f, inputRect.width - 2f, inputRect.height - 2f), backgroundColor);
+        }
+        descriptionProp.stringValue = EditorGUI.TextArea(inputRect, descriptionProp.stringValue, descriptionStyle);
+
+        // 调整输入框高度只影响窗口布局，不作为技能配置修改。
+        bool configurationChanged = GUI.changed;
+        descriptionFieldHeight = EditorGUILayout.Slider("输入框高度", descriptionFieldHeight, 80f, 400f);
+        GUI.changed = configurationChanged;
     }
 
     private void BindLuaScript(SkillSO skill)

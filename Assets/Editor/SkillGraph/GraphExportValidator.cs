@@ -15,12 +15,25 @@ namespace SkillGraphEditor
                 return issues;
             }
 
-            HashSet<string> reachable = GraphValidator.ReachableFlow(graph);
+            HashSet<string> reachable = GraphValidator.ParticipatingNodes(graph);
             int actionCount = 0;
             foreach (GraphNode node in graph.nodes)
             {
                 if (node.kind == NodeKind.Entry || !reachable.Contains(node.id))
                 {
+                    continue;
+                }
+                if (node.kind == NodeKind.If)
+                {
+                    ValidateBranch(graph, node, issues);
+                    continue;
+                }
+                if (node.kind == NodeKind.HealthBelow)
+                {
+                    if (float.IsNaN(node.healthPercent) || float.IsInfinity(node.healthPercent) || node.healthPercent < 0f || node.healthPercent > 100f)
+                    {
+                        issues.Add(new GraphIssue("InvalidHealthPercent", node.id, "", "healthPercent", "生命比例必须是 0 到 100 之间的有限数值。"));
+                    }
                     continue;
                 }
                 actionCount++;
@@ -52,6 +65,38 @@ namespace SkillGraphEditor
                 issues.Add(new GraphIssue("NoActions", entry.id, GraphPorts.FlowOutput, "", "入口执行链至少需要一个动作。"));
             }
             return issues;
+        }
+
+        private static void ValidateBranch(GraphData graph, GraphNode node, List<GraphIssue> issues)
+        {
+            GraphEdge condition = graph.edges.Find(edge => edge.to == node.id && edge.toPort == GraphPorts.ConditionInput);
+            if (condition == null)
+            {
+                issues.Add(new GraphIssue("MissingCondition", node.id, GraphPorts.ConditionInput, "", "请将生命比例条件的输出连接到 If 的条件输入。"));
+            }
+            GraphEdge satisfied = GraphValidator.Outgoing(graph, node.id, GraphPorts.FlowTrue);
+            GraphEdge unsatisfied = GraphValidator.Outgoing(graph, node.id, GraphPorts.FlowFalse);
+            if (satisfied == null && unsatisfied == null)
+            {
+                issues.Add(new GraphIssue("EmptyBranches", node.id, GraphPorts.FlowTrue, "", "满足和不满足分支至少需要连接一个动作；后续动作不能代替分支内容。"));
+            }
+            ValidateBranchSequence(graph, satisfied, issues);
+            ValidateBranchSequence(graph, unsatisfied, issues);
+        }
+
+        // 首版分支仅支持顺序动作；多个 If 可以通过“后续”按顺序执行。
+        private static void ValidateBranchSequence(GraphData graph, GraphEdge edge, List<GraphIssue> issues)
+        {
+            while (edge != null)
+            {
+                GraphNode node = graph.Find(edge.to);
+                if (node.kind == NodeKind.If)
+                {
+                    issues.Add(new GraphIssue("NestedBranchUnsupported", node.id, GraphPorts.FlowInput, "", "当前版本的分支内仅支持伤害和 Buff 顺序动作，请将另一个 If 连接到前一个 If 的后续输出。"));
+                    return;
+                }
+                edge = GraphValidator.Outgoing(graph, node.id, GraphPorts.FlowOutput);
+            }
         }
 
         // 转换只封装当前支持的两种动作，不增加运行时目标和状态判断。
