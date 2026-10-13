@@ -137,7 +137,7 @@ public sealed class CharacterRuntime : IDisposable
 
             if (!skill.IsReady)
             {
-                Log.Skill($"[Error] 角色 {CharacterId} 注册技能 {skillId} 失败：Lua 技能未正确加载");
+                Log.Skill($"[Error] 角色 {CharacterId} 注册技能 {skillId} 失败：技能执行配置未就绪");
                 skill.Dispose();
                 return false;
             }
@@ -175,19 +175,32 @@ public sealed class CharacterRuntime : IDisposable
 
     public bool TryCast(int skillId, Character caster, Character target)
     {
-        if (IsDead || IsDisposed)
+        return TryCast(skillId, caster, target, out _);
+    }
+
+    public bool TryCast(int skillId, Character caster, Character target, out SkillCastResult result)
+    {
+        // 角色状态由 Runtime 判断，不转移到 Action 或生成的 Lua 中。
+        if (IsDisposed)
         {
-            Log.Skill($"角色 {CharacterId} 已死亡，无法释放技能 {skillId}");
+            result = new SkillCastResult(SkillCastStatus.RuntimeDisposed);
+            Log.Skill($"角色 {CharacterId} 无法释放技能 {skillId}：{result.Message}");
             return false;
         }
-
+        if (IsDead)
+        {
+            result = new SkillCastResult(SkillCastStatus.CasterDead, GetRemainingCooldown(skillId));
+            Log.Skill($"角色 {CharacterId} 无法释放技能 {skillId}：{result.Message}");
+            return false;
+        }
         if (!skills.TryGetValue(skillId, out Skill skill))
         {
-            Log.Skill($"角色 {CharacterId} 未注册技能 {skillId}");
+            result = new SkillCastResult(SkillCastStatus.SkillNotFound);
+            Log.Skill($"角色 {CharacterId} 无法释放技能 {skillId}：{result.Message}");
             return false;
         }
 
-        return skill.TryExecute(caster, target);
+        return skill.TryExecute(caster, target, out result);
     }
 
     public float GetRemainingCooldown(int skillId)

@@ -88,53 +88,67 @@ public sealed class Skill : IDisposable
 
     public bool TryExecute(Character caster, Character target)
     {
-        if (!CanExecute)
-        {
-            Log.Skill( $"技能 {SkillId} 冷却中，剩余 {CurrentCooldown:F1} 秒");
+        return TryExecute(caster, target, out _);
+    }
 
+    // 保留 bool 入口，调用方需要失败原因时使用带结果参数的重载。
+    public bool TryExecute(Character caster, Character target, out SkillCastResult result)
+    {
+        SkillCastStatus rejection = SkillCastStatus.NotRequested;
+        if (disposed)
+        {
+            rejection = SkillCastStatus.SkillDisposed;
+        }
+        else if (isExecuting)
+        {
+            rejection = SkillCastStatus.AlreadyExecuting;
+        }
+        else if (CurrentCooldown > 0f)
+        {
+            rejection = SkillCastStatus.CoolingDown;
+        }
+        else if (execute == null)
+        {
+            rejection = SkillCastStatus.LuaNotReady;
+        }
+        else if (caster == null)
+        {
+            rejection = SkillCastStatus.InvalidCaster;
+        }
+        else if (float.IsNaN(Config.cooldown) || float.IsInfinity(Config.cooldown) || Config.cooldown < 0f)
+        {
+            rejection = SkillCastStatus.InvalidCooldown;
+        }
+
+        if (rejection != SkillCastStatus.NotRequested)
+        {
+            result = new SkillCastResult(rejection, CurrentCooldown);
+            Log.Skill($"技能 {SkillId} 请求被拒绝：{result.Message}");
             return false;
         }
 
-        if (execute == null)
-        {
-            Log.Skill( $"[Error] 技能 {SkillId} 的 Execute 委托为空");
-
-            return false;
-        }
-
-        if (caster == null || float.IsNaN(Config.cooldown) || float.IsInfinity(Config.cooldown) || Config.cooldown < 0f)
-        {
-            Log.Skill($"[Error] 技能 {SkillId} 的施法者为空或冷却配置无效");
-
-            return false;
-        }
-
+        // 通过检查即消耗冷却，中途异常保留已生效的效果；Lua 可主动刷新冷却。
         isExecuting = true;
+        CurrentCooldown = Config.cooldown;
         try
         {
-            Log.Skill( $"技能 {SkillId} 开始执行");
-
+            Log.Skill($"技能 {SkillId} 开始执行，冷却时间：{CurrentCooldown:F1} 秒");
             execute(caster, target, Config.luaResources);
+            result = new SkillCastResult(SkillCastStatus.Completed, CurrentCooldown);
+            Log.Skill($"技能 {SkillId} 执行完成，剩余冷却：{CurrentCooldown:F1} 秒");
+            return true;
         }
         catch (Exception exception)
         {
-            Log.Skill($"[Error] 技能 {SkillId} 的 Lua 逻辑执行失败");
+            result = new SkillCastResult(SkillCastStatus.ExecutionFailed, CurrentCooldown);
+            Log.Skill($"[Error] 技能 {SkillId} 的 Lua 逻辑执行异常，剩余冷却：{CurrentCooldown:F1} 秒");
             Debug.LogException(exception);
             return false;
         }
-
         finally
         {
             isExecuting = false;
         }
-
-
-
-        CurrentCooldown = Mathf.Max(0f, Config.cooldown);
-
-        Log.Skill( $"技能 {SkillId} 执行完成，冷却时间：{CurrentCooldown:F1} 秒");
-
-        return true;
     }
 
     public void Tick(float deltaTime)

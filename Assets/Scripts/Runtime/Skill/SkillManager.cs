@@ -77,29 +77,32 @@ public sealed class SkillManager : MonoBehaviour
 
     public bool RequestCast(int characterId, int skillId, Character caster, Character target)
     {
+        return RequestCast(characterId, skillId, caster, target, out _);
+    }
+
+    public bool RequestCast(int characterId, int skillId, Character caster, Character target, out SkillCastResult result)
+    {
         if (CharacterRuntimeManager.Instance == null)
         {
-            Log.Skill($"角色 {characterId} 请求释放技能 {skillId} 失败：CharacterRuntimeManager 未初始化");
+            result = new SkillCastResult(SkillCastStatus.RuntimeManagerUnavailable);
+            Log.Skill($"角色 {characterId} 请求释放技能 {skillId} 被拒绝：{result.Message}");
             return false;
         }
-
         CharacterRuntime runtime = CharacterRuntimeManager.Instance.GetRuntime(characterId);
-
         if (runtime == null)
         {
-            Log.Skill($"角色 {characterId} 请求释放技能 {skillId} 失败：运行时不存在");
+            result = new SkillCastResult(SkillCastStatus.RuntimeNotFound);
+            Log.Skill($"角色 {characterId} 请求释放技能 {skillId} 被拒绝：{result.Message}");
             return false;
         }
 
         Log.Skill($"角色 {characterId} 请求释放技能 {skillId}");
-
-        bool success = runtime.TryCast(skillId, caster, target);
-
+        bool success = runtime.TryCast(skillId, caster, target, out result);
         if (!success)
         {
-            Log.Skill($"角色 {characterId} 释放技能 {skillId} 失败");
+            string phase = result.Started ? "执行异常" : "请求被拒绝";
+            Log.Skill($"角色 {characterId} 释放技能 {skillId} {phase}：{result.Message}");
         }
-
         return success;
     }
 
