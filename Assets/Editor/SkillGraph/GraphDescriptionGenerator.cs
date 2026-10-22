@@ -8,20 +8,20 @@ namespace SkillGraphEditor
         public static string Generate(GraphGenerationPlan plan)
         {
             var descriptions = new List<string>();
-            var actions = new List<SkillActionConfig>();
+            var actions = new List<GraphNode>();
             bool followsBranch = false;
             foreach (GraphGenerationStep step in plan.Steps)
             {
                 if (step is GraphActionStep action)
                 {
-                    actions.Add(action.Action);
+                    actions.Add(action.Node);
                     continue;
                 }
                 bool immediatelyFollowsBranch = followsBranch && actions.Count == 0;
                 AppendActions(actions, descriptions, followsBranch);
                 var branch = (GraphIfStep)step;
-                string target = branch.Target == TargetKind.Self ? "自身" : "敌方";
-                string percent = branch.HealthPercent.ToString("R", CultureInfo.InvariantCulture);
+                string target = branch.Condition.target == TargetKind.Self ? "自身" : "敌方";
+                string percent = branch.Condition.healthPercent.ToString("R", CultureInfo.InvariantCulture);
                 string prefix = immediatelyFollowsBranch ? "随后，" : "";
                 descriptions.Add($"{prefix}若{target}当前生命低于最大生命的{percent}%，{DescribeBranch(branch.Satisfied)}；否则{DescribeBranch(branch.Unsatisfied)}。");
                 followsBranch = true;
@@ -30,7 +30,7 @@ namespace SkillGraphEditor
             return string.Join("\n", descriptions);
         }
 
-        private static void AppendActions(List<SkillActionConfig> actions, List<string> descriptions, bool followsBranch)
+        private static void AppendActions(List<GraphNode> actions, List<string> descriptions, bool followsBranch)
         {
             if (actions.Count == 0)
             {
@@ -47,10 +47,10 @@ namespace SkillGraphEditor
             {
                 return "不执行额外动作";
             }
-            var actions = new List<SkillActionConfig>();
+            var actions = new List<GraphNode>();
             foreach (GraphGenerationStep step in steps)
             {
-                actions.Add(((GraphActionStep)step).Action);
+                actions.Add(((GraphActionStep)step).Node);
             }
             // 只在同一分支内组合语句，分支和公共后续之间不合并动作。
             return ActionDescriptionGenerator.Generate(actions).Replace("。\n", "；随后").TrimEnd('。');

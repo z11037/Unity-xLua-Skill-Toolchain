@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using SkillGraphEditor;
+using UnityEditor;
 
 // 记录一条标准句覆盖的动作范围，保留组合描述的顺序与次数。
 public sealed class DescriptionSegment
@@ -21,7 +23,7 @@ public sealed class DescriptionSegment
 // 只将结构化动作转换为说明文本，不保存数据，也不解析或修改 Lua。
 public static class ActionDescriptionGenerator
 {
-    public static string Generate(IReadOnlyList<SkillActionConfig> actions)
+    public static string Generate(IReadOnlyList<GraphNode> actions)
     {
         List<DescriptionSegment> segments = GenerateSegments(actions);
         var descriptions = new List<string>();
@@ -33,32 +35,29 @@ public static class ActionDescriptionGenerator
     }
 
     // 只合并同目标、同类型的相邻动作；保留实际执行次数和数值顺序。
-    public static List<DescriptionSegment> GenerateSegments(IReadOnlyList<SkillActionConfig> actions)
+    public static List<DescriptionSegment> GenerateSegments(IReadOnlyList<GraphNode> actions)
     {
-        if (!SkillActionValidator.Validate(actions, out string error))
-        {
-            throw new ArgumentException(error, nameof(actions));
-        }
+        GraphExportValidator.RequireValidActions(actions);
 
         var segments = new List<DescriptionSegment>();
         int start = 0;
         while (start < actions.Count)
         {
-            SkillActionConfig action = actions[start];
+            GraphNode action = actions[start];
             int end = start + 1;
-            while (end < actions.Count && actions[end].type == action.type && actions[end].target == action.target)
+            while (end < actions.Count && actions[end].kind == action.kind && actions[end].target == action.target)
             {
                 end++;
             }
             int count = end - start;
-            string target = action.target == SkillActionTarget.Self ? "自身" : "敌方";
+            string target = action.target == TargetKind.Self ? "自身" : "敌方";
             string text;
-            switch (action.type)
+            switch (action.kind)
             {
-                case SkillActionType.Damage:
+                case NodeKind.Damage:
                     text = BuildDamageText(actions, start, count, target);
                     break;
-                case SkillActionType.Buff:
+                case NodeKind.ApplyBuff:
                     text = BuildBuffText(actions, start, count, target);
                     break;
                 default:
@@ -70,7 +69,7 @@ public static class ActionDescriptionGenerator
         return segments;
     }
 
-    private static string BuildDamageText(IReadOnlyList<SkillActionConfig> actions, int start, int count, string target)
+    private static string BuildDamageText(IReadOnlyList<GraphNode> actions, int start, int count, string target)
     {
         int damage = actions[start].damage;
         string value = damage.ToString(CultureInfo.InvariantCulture);
@@ -107,21 +106,27 @@ public static class ActionDescriptionGenerator
         return text.ToString();
     }
 
-    private static string BuildBuffText(IReadOnlyList<SkillActionConfig> actions, int start, int count, string target)
+    private static string BuildBuffText(IReadOnlyList<GraphNode> actions, int start, int count, string target)
     {
         var text = new StringBuilder($"对{target}");
         for (int i = 0; i < count; i++)
         {
-            SkillActionConfig action = actions[start + i];
-            if (string.IsNullOrWhiteSpace(action.buff.buffName))
+            GraphNode action = actions[start + i];
+            BuffSO buff = AssetDatabase.LoadAssetAtPath<BuffSO>(AssetDatabase.GUIDToAssetPath(action.buffGuid));
+            if (string.IsNullOrWhiteSpace(buff.buffName))
             {
-                throw new ArgumentException($"动作 {start + i + 1} 引用的 Buff（ID {action.buff.buffID}）缺少名称，请先填写 Buff 名称后生成描述。", nameof(actions));
+                throw new ArgumentException($"动作 {start + i + 1} 引用的 Buff（ID {buff.buffID}）缺少名称，请先填写 Buff 名称后生成描述。", nameof(actions));
+            }
+            // 这是标准描述的文本要求，不参与 Graph 或 Lua 的导出校验。
+            if (float.IsNaN(buff.duration) || float.IsInfinity(buff.duration) || buff.duration < 0f)
+            {
+                throw new ArgumentException($"动作 {start + i + 1} 引用的 Buff（ID {buff.buffID}）持续时间无法生成标准描述，请填写非负的有限数值。", nameof(actions));
             }
             if (i > 0)
             {
                 text.Append("；随后");
             }
-            text.Append($"施加{action.buff.buffName}效果，持续{action.buff.duration.ToString(CultureInfo.InvariantCulture)}秒");
+            text.Append($"施加{buff.buffName}效果，持续{buff.duration.ToString(CultureInfo.InvariantCulture)}秒");
         }
         // 多次施加按原顺序表达，不推断 Buff 叠层或累计持续时间。
         text.Append("。");

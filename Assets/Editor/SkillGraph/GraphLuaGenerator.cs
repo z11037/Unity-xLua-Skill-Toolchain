@@ -24,14 +24,14 @@ namespace SkillGraphEditor
             {
                 if (step is GraphActionStep action)
                 {
-                    body.Append(ActionLuaGenerator.Generate(new[] { action.Action }, out UnityEngine.Object[] references, resources.Count, indentation, actionNumber++));
+                    body.Append(ActionLuaGenerator.Generate(new[] { action.Node }, out UnityEngine.Object[] references, resources.Count, indentation, actionNumber++));
                     resources.AddRange(references);
                     continue;
                 }
                 var branch = (GraphIfStep)step;
                 string suffix = (conditionNumber++).ToString(CultureInfo.InvariantCulture);
-                string receiver = branch.Target == TargetKind.Self ? "attacker" : "target";
-                string percent = branch.HealthPercent.ToString("R", CultureInfo.InvariantCulture);
+                string receiver = branch.Condition.target == TargetKind.Self ? "attacker" : "target";
+                string percent = branch.Condition.healthPercent.ToString("R", CultureInfo.InvariantCulture);
                 body.AppendLine($"{indentation}-- 条件 {suffix}：生命比例低于 {percent}%");
                 body.AppendLine($"{indentation}local conditionTarget{suffix} = {receiver}");
                 body.AppendLine($"{indentation}local maxHealth{suffix} = conditionTarget{suffix} ~= nil and conditionTarget{suffix}:GetMaxHealthValue() or 0");

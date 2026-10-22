@@ -4,7 +4,7 @@ using UnityEditor;
 
 namespace SkillGraphEditor
 {
-    // 草稿可以缺少参数；导出时只要求入口执行链中的动作及资源完整可用。
+    // 草稿可以缺少参数；导出时检查入口执行链与资源引用，不判断 Buff 的业务配置。
     public static class GraphExportValidator
     {
         public static List<GraphIssue> Validate(GraphData graph)
@@ -37,26 +37,10 @@ namespace SkillGraphEditor
                     continue;
                 }
                 actionCount++;
-                SkillActionConfig action = ToAction(node);
-                if (!SkillActionValidator.Validate(new[] { action }, out string error))
+                GraphIssue issue = ValidateAction(node);
+                if (issue != null)
                 {
-                    string field = node.kind == NodeKind.Damage ? "damage" : "buffGuid";
-                    string code = node.kind == NodeKind.Damage ? "InvalidDamage" : action.buff == null ? "MissingBuffResource" : "InvalidBuff";
-                    const string prefix = "动作 1：";
-                    string message = error.StartsWith(prefix, StringComparison.Ordinal) ? error.Substring(prefix.Length) : error;
-                    if (node.kind == NodeKind.Damage)
-                    {
-                        message = $"固定伤害必须为大于 0 的整数（当前值：{node.damage}）。";
-                    }
-                    else if (action.buff == null)
-                    {
-                        message = string.IsNullOrWhiteSpace(node.buffGuid) ? "请为 Buff 节点选择一个 Buff 资源。" : "引用的 Buff 资源已失效或不是 BuffSO，请重新选择。";
-                    }
-                    else
-                    {
-                        message = "引用的 Buff 配置无效：" + message + "。";
-                    }
-                    issues.Add(new GraphIssue(code, node.id, "", field, message));
+                    issues.Add(issue);
                 }
             }
             if (actionCount == 0)
@@ -99,31 +83,56 @@ namespace SkillGraphEditor
             }
         }
 
-        // 转换只封装当前支持的两种动作，不增加运行时目标和状态判断。
-        internal static SkillActionConfig ToAction(GraphNode node)
+        // 顺序动作的两个生成器共用节点校验，不再构造另一份配置。
+        internal static void RequireValidActions(IReadOnlyList<GraphNode> nodes)
         {
-            SkillActionTarget target;
-            switch (node.target)
+            var issues = new List<GraphIssue>();
+            if (nodes == null || nodes.Count == 0)
             {
-                case TargetKind.CurrentTarget:
-                    target = SkillActionTarget.CurrentTarget;
-                    break;
-                case TargetKind.Self:
-                    target = SkillActionTarget.Self;
-                    break;
-                default:
-                    throw new InvalidOperationException("节点目标类型无效。");
+                issues.Add(new GraphIssue("NoActions", null, null, "nodes", "动作节点列表不能为空。"));
+            }
+            else
+            {
+                foreach (GraphNode node in nodes)
+                {
+                    GraphIssue issue = ValidateAction(node);
+                    if (issue != null)
+                    {
+                        issues.Add(issue);
+                    }
+                }
+            }
+            if (issues.Count > 0)
+            {
+                throw new GraphValidationException(issues);
+            }
+        }
+
+        internal static GraphIssue ValidateAction(GraphNode node)
+        {
+            if (node == null)
+            {
+                return new GraphIssue("NODE_NULL", null, null, "nodes", "动作节点为空。");
+            }
+            if (!Enum.IsDefined(typeof(TargetKind), node.target))
+            {
+                return new GraphIssue("NODE_TARGET", node.id, null, "target", "节点的目标类型无效。");
             }
             switch (node.kind)
             {
                 case NodeKind.Damage:
-                    return new SkillActionConfig { type = SkillActionType.Damage, target = target, damage = node.damage };
+                    return node.damage > 0 ? null : new GraphIssue("InvalidDamage", node.id, "", "damage", $"固定伤害必须为大于 0 的整数（当前值：{node.damage}）。");
                 case NodeKind.ApplyBuff:
                     string path = AssetDatabase.GUIDToAssetPath(node.buffGuid ?? "");
                     BuffSO buff = string.IsNullOrEmpty(path) ? null : AssetDatabase.LoadAssetAtPath<BuffSO>(path);
-                    return new SkillActionConfig { type = SkillActionType.Buff, target = target, buff = buff };
+                    if (buff == null)
+                    {
+                        string message = string.IsNullOrWhiteSpace(node.buffGuid) ? "请为 Buff 节点选择一个 Buff 资源。" : "引用的 Buff 资源已失效或不是 BuffSO，请重新选择。";
+                        return new GraphIssue("MissingBuffResource", node.id, "", "buffGuid", message);
+                    }
+                    return null;
                 default:
-                    throw new InvalidOperationException("该节点类型不支持转换为动作。");
+                    return new GraphIssue("UnsupportedAction", node.id, null, "kind", "该节点类型不支持作为顺序动作生成。");
             }
         }
     }

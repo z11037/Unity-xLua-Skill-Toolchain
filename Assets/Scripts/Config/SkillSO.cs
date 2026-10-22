@@ -12,7 +12,6 @@ public enum SkillTag
 public class SkillSO : ScriptableObject
 {
     [HideInInspector] public UnityEngine.Object[] luaResources = new UnityEngine.Object[0];
-    public System.Collections.Generic.List<SkillActionConfig> actions = new System.Collections.Generic.List<SkillActionConfig>();
     public int skillID;
     public string skillName;
     [TextArea(8, 20)] public string description = "";

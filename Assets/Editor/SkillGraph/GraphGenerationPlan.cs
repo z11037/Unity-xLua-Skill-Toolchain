@@ -2,30 +2,28 @@ using System.Collections.Generic;
 
 namespace SkillGraphEditor
 {
-    // 仅供两个生成器使用，不保存文件，也不承担运行时执行。
+    // 仅整理本次生成的顺序和分支；直接引用节点，不复制参数或跨编辑缓存。
     public abstract class GraphGenerationStep { }
 
     public sealed class GraphActionStep : GraphGenerationStep
     {
-        public SkillActionConfig Action { get; }
+        public GraphNode Node { get; }
 
-        public GraphActionStep(SkillActionConfig action)
+        public GraphActionStep(GraphNode node)
         {
-            Action = action;
+            Node = node;
         }
     }
 
     public sealed class GraphIfStep : GraphGenerationStep
     {
-        public TargetKind Target { get; }
-        public float HealthPercent { get; }
+        public GraphNode Condition { get; }
         public IReadOnlyList<GraphGenerationStep> Satisfied { get; }
         public IReadOnlyList<GraphGenerationStep> Unsatisfied { get; }
 
-        public GraphIfStep(TargetKind target, float healthPercent, IReadOnlyList<GraphGenerationStep> satisfied, IReadOnlyList<GraphGenerationStep> unsatisfied)
+        public GraphIfStep(GraphNode condition, IReadOnlyList<GraphGenerationStep> satisfied, IReadOnlyList<GraphGenerationStep> unsatisfied)
         {
-            Target = target;
-            HealthPercent = healthPercent;
+            Condition = condition;
             Satisfied = satisfied;
             Unsatisfied = unsatisfied;
         }
@@ -63,11 +61,11 @@ namespace SkillGraphEditor
                     GraphNode condition = graph.Find(conditionEdge.from);
                     List<GraphGenerationStep> satisfied = BuildSequence(graph, GraphValidator.Outgoing(graph, node.id, GraphPorts.FlowTrue));
                     List<GraphGenerationStep> unsatisfied = BuildSequence(graph, GraphValidator.Outgoing(graph, node.id, GraphPorts.FlowFalse));
-                    steps.Add(new GraphIfStep(condition.target, condition.healthPercent, satisfied.AsReadOnly(), unsatisfied.AsReadOnly()));
+                    steps.Add(new GraphIfStep(condition, satisfied.AsReadOnly(), unsatisfied.AsReadOnly()));
                 }
                 else
                 {
-                    steps.Add(new GraphActionStep(GraphExportValidator.ToAction(node)));
+                    steps.Add(new GraphActionStep(node));
                 }
                 // If 的后续与顺序动作使用同一个 Flow 输出；不把两个互斥分支展开为列表。
                 edge = GraphValidator.Outgoing(graph, node.id, GraphPorts.FlowOutput);
