@@ -51,7 +51,7 @@ namespace SkillGraphEditor
 
         public GraphNode Add(NodeKind kind, Vector2 position)
         {
-            if (!Enum.IsDefined(typeof(NodeKind), kind) || (kind == NodeKind.Entry && nodes.Exists(node => node.kind == NodeKind.Entry)))
+            if (!GraphNodeDefinitions.TryGet(kind, out _) || (kind == NodeKind.Entry && nodes.Exists(node => node.kind == NodeKind.Entry)))
             {
                 throw new InvalidOperationException("节点类型无效或入口已存在。");
             }

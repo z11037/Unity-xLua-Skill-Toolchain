@@ -28,8 +28,6 @@ namespace SkillGraphEditor
         private Vector2 inspectorScroll;
         private bool exportQueued;
         private bool descriptionQueued;
-        private const float NodeWidth = 180;
-        private const float NodeHeight = 100;
 
         public static void Open(SkillSO skill)
         {
@@ -343,11 +341,12 @@ namespace SkillGraphEditor
             float height = 1600;
             foreach (GraphNode node in session.Data.nodes)
             {
-                width = Mathf.Max(width, node.position.x + 400);
-                height = Mathf.Max(height, node.position.y + 300);
+                Vector2 size = GraphNodeDefinitions.Get(node.kind).Size;
+                width = Mathf.Max(width, node.position.x + size.x + 220);
+                height = Mathf.Max(height, node.position.y + size.y + 200);
             }
             scroll = GUI.BeginScrollView(viewport, scroll, new Rect(0, 0, width, height));
-            GraphNode pointedNode = pointerInCanvas ? session.Data.nodes.FindLast(node => new Rect(node.position, new Vector2(NodeWidth, HeightFor(node.kind))).Contains(Event.current.mousePosition)) : null;
+            GraphNode pointedNode = pointerInCanvas ? session.Data.nodes.FindLast(node => new Rect(node.position, GraphNodeDefinitions.Get(node.kind).Size).Contains(Event.current.mousePosition)) : null;
             if (pointerInCanvas && Event.current.type == EventType.MouseDown && Event.current.button == 0)
             {
                 selectedId = null;
@@ -355,7 +354,7 @@ namespace SkillGraphEditor
                 if (pointedNode != null)
                 {
                     SelectNode(pointedNode.id);
-                    if (new Rect(pointedNode.position, new Vector2(NodeWidth, 22)).Contains(Event.current.mousePosition))
+                    if (new Rect(pointedNode.position, new Vector2(GraphNodeDefinitions.Get(pointedNode.kind).Size.x, 22)).Contains(Event.current.mousePosition))
                     {
                         dragBefore = session.Snapshot();
                     }
@@ -373,7 +372,7 @@ namespace SkillGraphEditor
                 Vector3 arrival = -PortOutward(to, edge.toPort);
                 Vector3 second = end - arrival * 60;
                 bool selected = selectedEdge != null && SameEdge(edge, selectedEdge);
-                Color color = selected ? Color.yellow : GraphPorts.Find(from.kind, edge.fromPort).Type == PortType.Condition ? new Color(0.85f, 0.6f, 1f) : Color.cyan;
+                Color color = selected ? Color.yellow : GraphNodeDefinitions.FindPort(from.kind, edge.fromPort).Type == PortType.Condition ? new Color(0.85f, 0.6f, 1f) : Color.cyan;
                 Handles.DrawBezier(start, end, first, second, color, null, selected ? 4 : 3);
                 Handles.color = color;
                 Vector3 perpendicular = new Vector3(-arrival.y, arrival.x, 0);
@@ -415,7 +414,7 @@ namespace SkillGraphEditor
                 {
                     GUI.backgroundColor = new Color(0.6f, 0.9f, 1f);
                 }
-                Rect rect = GUI.Window(i, new Rect(node.position, new Vector2(NodeWidth, HeightFor(node.kind))), DrawNode, NodeTitle(node));
+                Rect rect = GUI.Window(i, new Rect(node.position, GraphNodeDefinitions.Get(node.kind).Size), DrawNode, NodeTitle(node));
                 GUI.backgroundColor = previousBackground;
                 node.position = new Vector2(Mathf.Max(0, rect.x), Mathf.Max(0, rect.y));
             }
@@ -426,7 +425,8 @@ namespace SkillGraphEditor
         private void DrawNode(int index)
         {
             GraphNode node = session.Data.nodes[index];
-            bool pointerInNode = new Rect(0, 0, NodeWidth, HeightFor(node.kind)).Contains(Event.current.mousePosition);
+            GraphNodeDefinition definition = GraphNodeDefinitions.Get(node.kind);
+            bool pointerInNode = new Rect(0, 0, definition.Size.x, definition.Size.y).Contains(Event.current.mousePosition);
             if (canvasHasFocus && Event.current.type == EventType.MouseDown && pointerInNode)
             {
                 SelectNode(node.id);
@@ -456,8 +456,28 @@ namespace SkillGraphEditor
                 Event.current.Use();
                 Repaint();
             }
-            string summary = node.kind == NodeKind.Damage ? "固定伤害：" + node.damage : node.kind == NodeKind.ApplyBuff ? "引用 BuffSO"
-                : node.kind == NodeKind.HealthBelow ? "生命低于 " + node.healthPercent + "%" : node.kind == NodeKind.If ? "分支结束后执行后续" : "技能编排入口";
+            string summary;
+            switch (node.kind)
+            {
+                case NodeKind.Entry:
+                    summary = "技能编排入口";
+                    break;
+                case NodeKind.Damage:
+                    summary = "固定伤害：" + node.damage;
+                    break;
+                case NodeKind.ApplyBuff:
+                    summary = "引用 BuffSO";
+                    break;
+                case NodeKind.HealthBelow:
+                    summary = "生命低于 " + node.healthPercent + "%";
+                    break;
+                case NodeKind.If:
+                    summary = "分支结束后执行后续";
+                    break;
+                default:
+                    summary = "该节点尚未实现摘要";
+                    break;
+            }
             string summaryTooltip = summary;
             if (node.kind == NodeKind.ApplyBuff)
             {
@@ -475,24 +495,20 @@ namespace SkillGraphEditor
                     summaryTooltip = summary;
                 }
             }
-            GUI.Label(new Rect(10, node.kind == NodeKind.If ? 48 : 23, 165, 20), new GUIContent(summary, summaryTooltip));
-            if (node.kind == NodeKind.If)
+            GUI.Label(definition.SummaryBounds, new GUIContent(summary, summaryTooltip));
+            foreach (GraphPortDefinition port in definition.Ports)
             {
-                GUI.Label(new Rect(110, 25, 60, 20), "条件");
-                GUI.Label(new Rect(25, 117, 50, 20), "满足");
-                GUI.Label(new Rect(117, 117, 60, 20), "不满足");
-                GUI.Label(new Rect(124, 96, 50, 20), "后续");
-            }
-            foreach (GraphPortDefinition port in GraphPorts.For(node.kind))
-            {
-                string tooltip = PortLabel(node.kind, port.Id);
+                if (!string.IsNullOrEmpty(port.Caption))
+                {
+                    GUI.Label(port.CaptionBounds, port.Caption);
+                }
                 string arrow = port.Side == PortSide.Top || port.Side == PortSide.Bottom ? "▼" : "▶";
                 Color previousColor = GUI.backgroundColor;
                 if (port.Type == PortType.Condition)
                 {
                     GUI.backgroundColor = new Color(0.85f, 0.6f, 1f);
                 }
-                bool clicked = GUI.Button(PortRect(node, port), new GUIContent(arrow, tooltip));
+                bool clicked = GUI.Button(port.Bounds, new GUIContent(arrow, port.DisplayName));
                 GUI.backgroundColor = previousColor;
                 if (!clicked)
                 {
@@ -520,31 +536,13 @@ namespace SkillGraphEditor
                     }
                 }
             }
-            GUI.DragWindow(new Rect(0, 0, NodeWidth, 22));
-        }
-
-        private static float HeightFor(NodeKind kind)
-        {
-            return kind == NodeKind.If ? 170 : NodeHeight;
-        }
-
-        private static Rect PortRect(GraphNode node, GraphPortDefinition port)
-        {
-            switch (port.Side)
-            {
-                case PortSide.Top:
-                    return new Rect(75, 24, 30, 24);
-                case PortSide.Bottom:
-                    return new Rect(port.Id == GraphPorts.FlowTrue ? 30 : 120, HeightFor(node.kind) - 30, 30, 25);
-                default:
-                    return new Rect(port.Side == PortSide.Left ? 5 : NodeWidth - 35, node.kind == NodeKind.If ? 72 : 55, 30, 25);
-            }
+            GUI.DragWindow(new Rect(0, 0, definition.Size.x, 22));
         }
 
         private static Vector3 PortPosition(GraphNode node, string portId)
         {
-            GraphPortDefinition port = GraphPorts.Find(node.kind, portId);
-            Rect rect = PortRect(node, port);
+            GraphPortDefinition port = GraphNodeDefinitions.FindPort(node.kind, portId);
+            Rect rect = port.Bounds;
             switch (port.Side)
             {
                 case PortSide.Top:
@@ -558,7 +556,7 @@ namespace SkillGraphEditor
 
         private static Vector3 PortOutward(GraphNode node, string portId)
         {
-            switch (GraphPorts.Find(node.kind, portId).Side)
+            switch (GraphNodeDefinitions.FindPort(node.kind, portId).Side)
             {
                 case PortSide.Left:
                     return Vector3.left;
@@ -568,25 +566,6 @@ namespace SkillGraphEditor
                     return new Vector3(0, 1, 0);
                 default:
                     return Vector3.right;
-            }
-        }
-
-        private static string PortLabel(NodeKind kind, string portId)
-        {
-            switch (portId)
-            {
-                case GraphPorts.ConditionInput:
-                    return "条件输入";
-                case GraphPorts.ConditionOutput:
-                    return "条件输出";
-                case GraphPorts.FlowTrue:
-                    return "满足分支输出";
-                case GraphPorts.FlowFalse:
-                    return "不满足分支输出";
-                case GraphPorts.FlowInput:
-                    return "执行流程输入";
-                default:
-                    return kind == NodeKind.If ? "后续流程输出" : "执行流程输出";
             }
         }
 
@@ -693,7 +672,8 @@ namespace SkillGraphEditor
                 }
                 else if (!string.IsNullOrEmpty(issue.PortId))
                 {
-                    location += " · " + PortLabel(node == null ? NodeKind.Entry : node.kind, issue.PortId);
+                    GraphPortDefinition port = node == null ? null : GraphNodeDefinitions.FindPort(node.kind, issue.PortId);
+                    location += " · " + (port == null ? issue.PortId : port.DisplayName);
                 }
                 using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
                 {
@@ -718,7 +698,7 @@ namespace SkillGraphEditor
             if (edge != null)
             {
                 GraphNode source = session.Data.Find(edge.from);
-                GUILayout.Label(GraphPorts.Find(source.kind, edge.fromPort).Type == PortType.Condition ? "Condition 条件连线" : "Flow 流程连线", EditorStyles.boldLabel);
+                GUILayout.Label(GraphNodeDefinitions.FindPort(source.kind, edge.fromPort).Type == PortType.Condition ? "Condition 条件连线" : "Flow 流程连线", EditorStyles.boldLabel);
                 GUILayout.Label(NodeTitle(session.Data.Find(edge.from)) + " → " + NodeTitle(session.Data.Find(edge.to)), EditorStyles.wordWrappedLabel);
                 if (GUILayout.Button("断开连接"))
                 {
@@ -774,7 +754,7 @@ namespace SkillGraphEditor
                     }
                     EditorGUILayout.HelpBox("严格小于；等于阈值、目标为空或最大生命不大于零时，条件不满足。", MessageType.Info);
                 }
-                else
+                else if (node.kind == NodeKind.ApplyBuff)
                 {
                     BuffSO buff = AssetDatabase.LoadAssetAtPath<BuffSO>(AssetDatabase.GUIDToAssetPath(node.buffGuid ?? ""));
                     EditorGUI.BeginChangeCheck();
@@ -787,6 +767,10 @@ namespace SkillGraphEditor
                     {
                         EditorGUILayout.HelpBox("Buff 未指定或引用失效，可保存为草稿。", MessageType.Warning);
                     }
+                }
+                else
+                {
+                    EditorGUILayout.HelpBox("该节点尚未实现参数编辑。", MessageType.Warning);
                 }
                 if (!participates)
                 {
@@ -805,24 +789,27 @@ namespace SkillGraphEditor
             GUILayout.Label("节点面板：将卡片拖到画布", EditorStyles.boldLabel);
             using (new EditorGUILayout.HorizontalScope(GUILayout.Height(65)))
             {
-                DrawCard(NodeKind.Damage, "伤害\n▶ 固定数值");
-                DrawCard(NodeKind.ApplyBuff, "施加 Buff\n▶ 引用配置");
-                DrawCard(NodeKind.HealthBelow, "生命比例条件\n▶ 低于指定百分比");
-                DrawCard(NodeKind.If, "If 条件分支\n▼ 分支　▶ 后续");
+                foreach (GraphNodeDefinition definition in GraphNodeDefinitions.All)
+                {
+                    if (definition.ShowInPalette)
+                    {
+                        DrawCard(definition);
+                    }
+                }
                 GUILayout.FlexibleSpace();
             }
         }
 
-        private void DrawCard(NodeKind kind, string label)
+        private void DrawCard(GraphNodeDefinition definition)
         {
             Rect rect = GUILayoutUtility.GetRect(150, 60, GUILayout.Width(150));
-            GUI.Box(rect, label, EditorStyles.helpBox);
+            GUI.Box(rect, definition.DisplayName + "\n" + definition.PaletteDescription, EditorStyles.helpBox);
             if (Event.current.type == EventType.MouseDrag && rect.Contains(Event.current.mousePosition) && Event.current.button == 0)
             {
                 DragAndDrop.PrepareStartDrag();
                 DragAndDrop.objectReferences = new UnityEngine.Object[0];
-                DragAndDrop.SetGenericData("SkillGraphNode", kind);
-                DragAndDrop.StartDrag(Label(kind));
+                DragAndDrop.SetGenericData("SkillGraphNode", definition.Kind);
+                DragAndDrop.StartDrag(definition.DisplayName);
                 Event.current.Use();
             }
         }
@@ -1038,28 +1025,9 @@ namespace SkillGraphEditor
             return GraphValidator.ParticipatingNodes(session.Data).Contains(id);
         }
 
-        private static string Label(NodeKind kind)
-        {
-            switch (kind)
-            {
-                case NodeKind.Entry:
-                    return "入口";
-                case NodeKind.Damage:
-                    return "伤害";
-                case NodeKind.ApplyBuff:
-                    return "施加 Buff";
-                case NodeKind.If:
-                    return "If 分支";
-                case NodeKind.HealthBelow:
-                    return "生命比例条件";
-                default:
-                    return "未知节点";
-            }
-        }
-
         private string NodeTitle(GraphNode node)
         {
-            return Label(node.kind) + " · 节点 " + (session.Data.nodes.IndexOf(node) + 1);
+            return GraphNodeDefinitions.Get(node.kind).DisplayName + " · 节点 " + (session.Data.nodes.IndexOf(node) + 1);
         }
     }
 }

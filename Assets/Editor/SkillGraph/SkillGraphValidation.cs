@@ -77,7 +77,7 @@ namespace SkillGraphEditor
                 {
                     issues.Add(new GraphIssue("NODE_ID", node.id, null, "id", "节点 ID 无效或重复。"));
                 }
-                if (!Enum.IsDefined(typeof(NodeKind), node.kind))
+                if (!GraphNodeDefinitions.TryGet(node.kind, out _))
                 {
                     issues.Add(new GraphIssue("NODE_TYPE", node.id, null, "kind", "节点类型不受支持。"));
                 }
@@ -130,8 +130,8 @@ namespace SkillGraphEditor
             {
                 return issues;
             }
-            GraphPortDefinition source = GraphPorts.Find(graph.Find(from).kind, fromPort);
-            GraphPortDefinition destination = GraphPorts.Find(graph.Find(to).kind, toPort);
+            GraphPortDefinition source = GraphNodeDefinitions.FindPort(graph.Find(from).kind, fromPort);
+            GraphPortDefinition destination = GraphNodeDefinitions.FindPort(graph.Find(to).kind, toPort);
             int outputs = 0;
             int inputs = 0;
             foreach (GraphEdge edge in graph.edges)
@@ -211,8 +211,8 @@ namespace SkillGraphEditor
             {
                 issues.Add(new GraphIssue("EDGE_SELF", from, fromPort, null, "节点不能连接自身。"));
             }
-            GraphPortDefinition output = GraphPorts.Find(source.kind, fromPort);
-            GraphPortDefinition input = GraphPorts.Find(destination.kind, toPort);
+            GraphPortDefinition output = GraphNodeDefinitions.FindPort(source.kind, fromPort);
+            GraphPortDefinition input = GraphNodeDefinitions.FindPort(destination.kind, toPort);
             if (output == null)
             {
                 issues.Add(new GraphIssue("PORT_MISSING", from, fromPort, null, "来源端口缺失或不存在。"));
@@ -241,7 +241,7 @@ namespace SkillGraphEditor
             string key = nodeId + ":" + portId;
             counts.TryGetValue(key, out int count);
             counts[key] = ++count;
-            if (count > GraphPorts.Find(graph.Find(nodeId).kind, portId).MaxConnections)
+            if (count > GraphNodeDefinitions.FindPort(graph.Find(nodeId).kind, portId).MaxConnections)
             {
                 issues.Add(new GraphIssue("PORT_OCCUPIED", nodeId, portId, null, "端口连接数量超过限制。"));
             }
@@ -274,7 +274,7 @@ namespace SkillGraphEditor
             foreach (GraphEdge edge in graph.edges)
             {
                 GraphNode node = edge == null ? null : graph.Find(edge.from);
-                GraphPortDefinition port = node == null ? null : GraphPorts.Find(node.kind, edge.fromPort);
+                GraphPortDefinition port = node == null ? null : GraphNodeDefinitions.FindPort(node.kind, edge.fromPort);
                 if (port == null || port.Type != PortType.Flow || edge.to == null)
                 {
                     continue;
